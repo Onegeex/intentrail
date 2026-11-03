@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { checkRateLimit, getClientIp } from "./rate-limit";
 
-export function jsonError(status: number, message: string, extra?: Record<string, unknown>) {
+/** Client-safe errors only. Never pass err.message / stack / paths here. */
+export function jsonError(
+  status: number,
+  message: string,
+  extra?: Record<string, unknown>,
+) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
 }
 
@@ -14,4 +19,11 @@ export function enforceRateLimit(req: Request, route: string) {
     });
   }
   return null;
+}
+
+/** Log server-side; return a generic client message. */
+export function internalError(logLabel: string, err: unknown) {
+  const detail = err instanceof Error ? err.message : String(err);
+  console.error(`[intentrail] ${logLabel}:`, detail);
+  return jsonError(500, "Internal server error");
 }

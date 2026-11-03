@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { enforceRateLimit, jsonError } from "@/lib/api";
+import { enforceRateLimit, jsonError, internalError } from "@/lib/api";
 import { defaultPriceSymbols, fetchPrices, listAllowlistedForClient } from "@/lib/prices";
 
 export const runtime = "nodejs";
@@ -29,7 +29,10 @@ export async function GET(req: Request) {
       allowlist: listAllowlistedForClient(),
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "price error";
-    return jsonError(400, msg);
+    const msg = err instanceof Error ? err.message : "";
+    if (msg.startsWith("Symbol not allowlisted")) {
+      return jsonError(400, "Validation failed");
+    }
+    return internalError("prices", err);
   }
 }

@@ -16,7 +16,7 @@ a feature disagree, the control wins.
 | Quote → spend confusion | Dry quote turned into deposit | Quote API is `dry: true` only. No deposit address flow in Day 1 UI. |
 | Key phishing | App asks for seed phrase | App never accepts, stores, logs, or displays private keys or seeds. |
 | Rate abuse | Flood propose/quote | Per-IP fixed-window rate limit on API routes; fail closed if IP unknown. |
-| Kill switch reset | Restart clears halt | Kill switch persisted under `data/runtime-state.json` (gitignored). |
+| Kill switch reset | Restart clears halt | Kill switch persisted under `data/runtime-state.json` locally, or `/tmp/intentrail/` on Vercel, with in-memory fallback. Corrupt/unreadable state fails closed (kill ON). |
 
 ## Non-negotiables
 

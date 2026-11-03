@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { enforceRateLimit, jsonError } from "@/lib/api";
+import { enforceRateLimit, jsonError, internalError } from "@/lib/api";
 import { buildProposal } from "@/lib/agent";
 import { evaluateProposal } from "@/lib/guardrails";
 import { fetchPrices } from "@/lib/prices";
@@ -56,7 +56,6 @@ export async function POST(req: Request) {
       prices: { from: fromPrice, to: toPrice },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "propose error";
-    return jsonError(500, msg);
+    return internalError("propose", err);
   }
 }

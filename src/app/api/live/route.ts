@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
-import { enforceRateLimit, jsonError } from "@/lib/api";
+import { enforceRateLimit, internalError } from "@/lib/api";
 import { HARD_CAPS, resolveNetwork } from "@/lib/config";
 import { evaluateProposal } from "@/lib/guardrails";
 import { defaultPriceSymbols, fetchPrices } from "@/lib/prices";
-import { getPolicy, getSpentToday, listRecentProposals, isApproved } from "@/lib/store";
+import {
+  getPolicy,
+  getSpentToday,
+  listRecentProposals,
+  isApproved,
+  saveProposal,
+} from "@/lib/store";
 import { buildProposal } from "@/lib/agent";
-import { saveProposal } from "@/lib/store";
+import type { GuardResult, TradeProposal } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +19,7 @@ export const dynamic = "force-dynamic";
 /**
  * Live home feed: prices + recent proposals with guardrails re-evaluated,
  * plus an auto-generated fresh probe proposal so the feed is never empty.
+ * Must keep returning prices even if proposal persistence is degraded.
  */
 export async function GET(req: Request) {
   const limited = enforceRateLimit(req, "live");
@@ -24,12 +31,28 @@ export async function GET(req: Request) {
 
   try {
     const priceResult = await fetchPrices(defaultPriceSymbols(), { demo });
-    const policy = await getPolicy();
-    const spentUsdToday = await getSpentToday();
 
-    let recent = await listRecentProposals(8);
+    let policy;
+    let spentUsdToday = 0;
+    let recent: TradeProposal[] = [];
+    try {
+      policy = await getPolicy();
+      spentUsdToday = await getSpentToday();
+      recent = await listRecentProposals(8);
+    } catch (err) {
+      console.error("[intentrail] live state load:", err instanceof Error ? err.message : err);
+      policy = {
+        ...({
+          maxLossPerTradeUsd: 2,
+          dailySpendCapUsd: 25,
+          maxSlippageBps: 100,
+          requireHumanApproval: true,
+          allowlistedSymbols: ["NEAR", "USDC", "WETH", "ETH", "BTC"],
+        } as const),
+        killSwitch: true,
+      };
+    }
 
-    // Keep the live feed fresh for judges: if empty or last > 60s, propose a small probe
     const newest = recent[0];
     const stale =
       !newest || Date.now() - Date.parse(newest.createdAt) > 60_000;
@@ -45,18 +68,53 @@ export async function GET(req: Request) {
           toPrice: to,
           demo,
         });
-        await saveProposal(proposal);
-        recent = await listRecentProposals(8);
+        try {
+          await saveProposal(proposal);
+          recent = await listRecentProposals(8);
+        } catch (err) {
+          console.error(
+            "[intentrail] live saveProposal:",
+            err instanceof Error ? err.message : err,
+          );
+          // Still show the in-request proposal even if persist failed
+          recent = [proposal, ...recent].slice(0, 8);
+        }
       }
     }
 
-    const feed = await Promise.all(
-      recent.map(async (proposal) => {
+    const feed: {
+      proposal: TradeProposal;
+      guard: GuardResult;
+      approved: boolean;
+    }[] = [];
+    for (const proposal of recent) {
+      try {
         const guard = await evaluateProposal(proposal);
         const approved = await isApproved(proposal.id);
-        return { proposal, guard, approved };
-      }),
-    );
+        feed.push({ proposal, guard, approved });
+      } catch (err) {
+        console.error(
+          "[intentrail] live evaluate:",
+          err instanceof Error ? err.message : err,
+        );
+        feed.push({
+          proposal,
+          guard: {
+            decision: "BLOCK",
+            reason: "Guardrail evaluation unavailable",
+            checks: [
+              {
+                code: "KILL_SWITCH",
+                ok: false,
+                detail: "Fail closed: evaluation error",
+              },
+            ],
+            proposalId: proposal.id,
+          },
+          approved: false,
+        });
+      }
+    }
 
     return NextResponse.json({
       ok: true,
@@ -73,7 +131,6 @@ export async function GET(req: Request) {
       refreshHintSec: 15,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "live feed error";
-    return jsonError(500, msg);
+    return internalError("live", err);
   }
 }
