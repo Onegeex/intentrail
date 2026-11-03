@@ -3,6 +3,7 @@ import {
   ONECLICK_BASE,
   isDryQuoteApiEnabled,
   isExecutionEnabled,
+  isMainnetLiveAllowed,
   resolveNetwork,
 } from "./config";
 import { getTokenBySymbol } from "./tokens";
@@ -203,13 +204,12 @@ export async function requestExecutableQuote(
 ): Promise<QuoteResult> {
   const { proposal, accountId } = input;
 
-  if (!isExecutionEnabled()) {
+  if (!isMainnetLiveAllowed()) {
     return {
       dry: false,
       ok: false,
       simulated: false,
-      message:
-        "Execution disabled. Set NEAR_NETWORK=mainnet and ALLOW_MAINNET=true locally (never on shared demo).",
+      message: "Mainnet Live mode disabled by operator (MAINNET_DISABLED=true).",
       executionEnabled: false,
     };
   }
@@ -293,6 +293,47 @@ export async function requestExecutableQuote(
         executionEnabled: true,
       };
     }
+    const depositAddress = String(q.depositAddress).trim();
+    // Must come from 1Click; reject empty / oversized / odd charset
+    if (
+      depositAddress.length < 2 ||
+      depositAddress.length > 128 ||
+      !/^[a-zA-Z0-9._:-]+$/.test(depositAddress)
+    ) {
+      return {
+        dry: false,
+        ok: false,
+        simulated: false,
+        message: "Invalid deposit address from 1Click",
+        executionEnabled: true,
+      };
+    }
+    const quotedAmount = String(q.amountIn ?? amount);
+    if (quotedAmount !== amount) {
+      // Allow 1Click to normalize; still require numeric and match proposal USD
+      if (!/^\d+$/.test(quotedAmount)) {
+        return {
+          dry: false,
+          ok: false,
+          simulated: false,
+          message: "Quote amountIn mismatch",
+          executionEnabled: true,
+        };
+      }
+    }
+    const quotedUsd = Number(q.amountInUsd ?? proposal.amountUsd);
+    if (
+      !Number.isFinite(quotedUsd) ||
+      quotedUsd > HARD_CAPS.maxMainnetSwapUsd + 0.05
+    ) {
+      return {
+        dry: false,
+        ok: false,
+        simulated: false,
+        message: `Quoted USD $${quotedUsd} exceeds mainnet cap $${HARD_CAPS.maxMainnetSwapUsd}`,
+        executionEnabled: true,
+      };
+    }
     const { feeUsd, feeBps } = feeFromQuote(proposal, q);
     return {
       dry: false,
@@ -316,7 +357,7 @@ export async function requestExecutableQuote(
       slippageBps: data.quoteRequest?.slippageTolerance ?? proposal.slippageBps,
       appFeeBps: data.quoteRequest?.appFees?.[0]?.fee,
       executionEnabled: true,
-      depositAddress: q.depositAddress,
+      depositAddress,
       depositMemo: q.depositMemo,
       depositContractId: from.nearContractId,
       depositMethod: "ft_transfer",

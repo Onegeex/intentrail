@@ -69,14 +69,56 @@ export const guardCheckBodySchema = z.object({
 });
 
 export const executePrepareBodySchema = z.object({
-  proposalId: z.string().uuid(),
+  proposalId: z.string().uuid().optional(),
+  /** Full proposal accepted for serverless (re-checked fail-closed). */
+  proposal: z
+    .object({
+      id: z.string().min(1).max(80),
+      createdAt: z.string().max(40).optional(),
+      side: z.enum(["buy", "sell"]),
+      fromSymbol: symbolSchema,
+      toSymbol: symbolSchema,
+      amountUsd: z.number().finite().min(HARD_CAPS.minTradeUsd).max(HARD_CAPS.maxMainnetSwapUsd),
+      amountIn: z.string().regex(/^\d+$/).max(80),
+      estimatedOut: z.string().max(80),
+      estimatedFeeUsd: z.number().finite(),
+      slippageBps: z.number().finite().min(0).max(HARD_CAPS.maxSlippageBps),
+      stopLossPct: z.number().finite().min(0).max(100),
+      trend: z.enum(["up", "down", "flat"]),
+      rationale: z.string().max(800),
+      feeAwareOk: z.boolean(),
+      network: z.enum(["testnet", "mainnet"]).optional(),
+      demo: z.boolean().optional(),
+      votes: z
+        .array(
+          z.object({
+            agent: z.enum(["trend", "risk"]),
+            vote: z.enum(["yes", "no"]),
+            reason: z.string().max(300),
+          }),
+        )
+        .min(2),
+      swarmAgreed: z.literal(true),
+      riskInputs: z
+        .object({
+          volatilityPct: z.number(),
+          drawdownPct: z.number(),
+          positionUsd: z.number(),
+        })
+        .optional(),
+    })
+    .optional(),
   accountId: z
     .string()
     .trim()
     .min(2)
     .max(64)
     .regex(/^[a-z0-9._-]+$/),
-  /** Explicit user confirmation required */
+  liveMode: z.literal(true),
+  network: z.literal("mainnet"),
+  riskAcknowledged: z.literal(true),
   confirmExecute: z.literal(true),
   confirmMainnetCap: z.literal(true),
+}).refine((b) => Boolean(b.proposalId || b.proposal), {
+  message: "proposalId or proposal required",
 });

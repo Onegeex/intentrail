@@ -1,4 +1,4 @@
-import { HARD_CAPS, isExecutionEnabled } from "./config";
+import { HARD_CAPS, isMainnetLiveAllowed } from "./config";
 import { getPolicy, getSpentToday } from "./store";
 import { isAllowlistedSymbol } from "./tokens";
 import type { GuardCheck, GuardResult, QuoteResult, TradeProposal } from "./types";
@@ -68,10 +68,10 @@ export async function evaluateProposal(
     );
     push(
       "EXECUTION_FLAGS",
-      isExecutionEnabled(),
-      isExecutionEnabled()
-        ? "NEAR_NETWORK=mainnet + ALLOW_MAINNET=true"
-        : "Execution flags off (testnet default)",
+      isMainnetLiveAllowed(),
+      isMainnetLiveAllowed()
+        ? "Operator allows mainnet Live mode (MAINNET_DISABLED off)"
+        : "Operator disabled mainnet (MAINNET_DISABLED=true)",
     );
   }
 

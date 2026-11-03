@@ -7,17 +7,23 @@ import type { QuoteResult, TradeProposal } from "@/lib/types";
 const MAX_MAINNET_SWAP_USD = 1;
 
 /**
- * Real execution path UI. Only works when dual mainnet flags are on locally.
- * Never auto-signs; requires explicit clicks. Caps at $1.
+ * Hosted Live mainnet path: prepare 1Click deposit → visitor signs ft_transfer.
+ * Requires Live mode + mainnet + risk ack + wallet. Caps at $1.
  */
 export function ExecutePanel({
   proposal,
   network,
   demo,
+  liveMode,
+  riskAcknowledged,
+  mainnetLiveAllowed,
 }: {
   proposal: TradeProposal | null;
   network: NearNetwork;
   demo?: boolean;
+  liveMode: boolean;
+  riskAcknowledged: boolean;
+  mainnetLiveAllowed: boolean;
 }) {
   const [accountId, setAccountId] = useState<string | null>(null);
   const [quote, setQuote] = useState<QuoteResult | null>(null);
@@ -30,8 +36,7 @@ export function ExecutePanel({
     try {
       const selector = await getSelector(network);
       const state = await selector.store.getState();
-      const id = state.accounts[0]?.accountId || null;
-      setAccountId(id);
+      setAccountId(state.accounts[0]?.accountId || null);
     } catch {
       setAccountId(null);
     }
@@ -41,6 +46,11 @@ export function ExecutePanel({
     void refreshAccount();
   }, [refreshAccount]);
 
+  if (demo) return null;
+
+  const canLive =
+    liveMode && network === "mainnet" && mainnetLiveAllowed && riskAcknowledged;
+
   async function prepare() {
     if (!proposal) return;
     setBusy(true);
@@ -48,7 +58,11 @@ export function ExecutePanel({
     setQuote(null);
     try {
       if (!accountId) {
-        setMsg("Connect a NEAR wallet first.");
+        setMsg("Connect your NEAR wallet first.");
+        return;
+      }
+      if (!canLive) {
+        setMsg("Enable Live mode, select mainnet, and accept the risk acknowledgement.");
         return;
       }
       if (proposal.amountUsd > MAX_MAINNET_SWAP_USD) {
@@ -58,7 +72,7 @@ export function ExecutePanel({
         return;
       }
       if (!confirmCap) {
-        setMsg("Check the $1 mainnet cap confirmation.");
+        setMsg("Confirm the $1 per-swap cap for this trade.");
         return;
       }
       const res = await fetch("/api/execute/prepare", {
@@ -66,19 +80,54 @@ export function ExecutePanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           proposalId: proposal.id,
+          proposal: {
+            id: proposal.id,
+            createdAt: proposal.createdAt,
+            side: proposal.side,
+            fromSymbol: proposal.fromSymbol,
+            toSymbol: proposal.toSymbol,
+            amountUsd: proposal.amountUsd,
+            amountIn: proposal.amountIn,
+            estimatedOut: proposal.estimatedOut,
+            estimatedFeeUsd: proposal.estimatedFeeUsd,
+            slippageBps: proposal.slippageBps,
+            stopLossPct: proposal.stopLossPct,
+            trend: proposal.trend,
+            rationale: proposal.rationale,
+            feeAwareOk: proposal.feeAwareOk,
+            network: "mainnet",
+            demo: false,
+            votes: proposal.votes,
+            swarmAgreed: proposal.swarmAgreed === true,
+            riskInputs: proposal.riskInputs,
+          },
           accountId,
+          liveMode: true,
+          network: "mainnet",
+          riskAcknowledged: true,
           confirmExecute: true,
           confirmMainnetCap: true,
         }),
       });
       const data = await res.json();
       if (!data.ok) {
-        setMsg(data.error || "Prepare failed (flags off on public demo is expected)");
+        setMsg(data.error || "Prepare failed");
         if (data.quote) setQuote(data.quote);
         return;
       }
-      setQuote(data.quote);
-      setMsg("Executable quote ready — review deposit, then sign in your wallet.");
+      // Client re-check before showing sign
+      const q = data.quote as QuoteResult;
+      const usd = Number(q.amountInUsd ?? proposal.amountUsd);
+      if (!q.depositAddress || !q.amountIn || !q.depositContractId) {
+        setMsg("Client refused: incomplete deposit quote");
+        return;
+      }
+      if (usd > MAX_MAINNET_SWAP_USD + 0.05) {
+        setMsg("Client refused: quoted USD over $1 cap");
+        return;
+      }
+      setQuote(q);
+      setMsg("Executable quote ready — review deposit, then Sign deposit.");
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "error");
     } finally {
@@ -91,8 +140,13 @@ export function ExecutePanel({
     setBusy(true);
     setMsg(null);
     try {
-      if ((Number(quote.amountInUsd) || proposal?.amountUsd || 99) > MAX_MAINNET_SWAP_USD) {
+      const usd = Number(quote.amountInUsd ?? proposal?.amountUsd ?? 99);
+      if (usd > MAX_MAINNET_SWAP_USD + 0.05) {
         setMsg("Client refused sign: over $1 cap.");
+        return;
+      }
+      if (!quote.depositAddress || quote.depositAddress.length < 2) {
+        setMsg("Client refused sign: missing deposit address");
         return;
       }
       const result = await signFtDeposit({
@@ -127,20 +181,18 @@ export function ExecutePanel({
     }
   }
 
-  if (demo) return null;
-
   return (
     <section className="rounded-2xl border border-amber-900/40 bg-amber-950/10 p-5 space-y-3">
-      <h2 className="text-base font-semibold text-white">Real $1 swap path (opt-in)</h2>
+      <h2 className="text-base font-semibold text-white">Live ≤$1 swap (hosted)</h2>
       <p className="text-xs text-zinc-400">
-        Non-dry 1Click → deposit address → <strong className="text-zinc-200">you</strong> sign in
-        wallet → status poll. Hard cap <code className="text-amber-200">${MAX_MAINNET_SWAP_USD}</code>.
-        Requires local <code className="text-zinc-300">NEAR_NETWORK=mainnet</code> +{" "}
-        <code className="text-zinc-300">ALLOW_MAINNET=true</code>. Public demo keeps flags off.
-        IntentRail never auto-executes.
+        Works on this site — no local code. Toggle <strong>Live mode</strong>, pick{" "}
+        <strong>mainnet</strong>, connect wallet, propose <strong>$1</strong>, then prepare +
+        sign. Hard caps: ${MAX_MAINNET_SWAP_USD}/swap, $3/wallet/day.
       </p>
       <p className="text-xs font-mono text-zinc-500">
-        wallet={accountId || "(not connected)"} · network={network}
+        live={String(liveMode)} · network={network} · riskAck={String(riskAcknowledged)} ·
+        wallet={accountId || "(connect wallet)"} · operator=
+        {mainnetLiveAllowed ? "allowed" : "MAINNET_DISABLED"}
       </p>
       <label className="flex items-start gap-2 text-xs text-zinc-300">
         <input
@@ -149,13 +201,13 @@ export function ExecutePanel({
           onChange={(e) => setConfirmCap(e.target.checked)}
           className="mt-0.5"
         />
-        I understand this can move ≤ ${MAX_MAINNET_SWAP_USD} of my funds on mainnet after I
-        click Sign deposit.
+        I confirm this specific swap is ≤ ${MAX_MAINNET_SWAP_USD} and I will review the deposit
+        address before signing.
       </label>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          disabled={busy || !proposal}
+          disabled={busy || !proposal || !canLive}
           onClick={() => void prepare()}
           className="rounded-lg bg-amber-500/90 text-black hover:bg-amber-400 disabled:opacity-50 px-3 py-2 text-sm font-semibold"
         >
@@ -174,7 +226,7 @@ export function ExecutePanel({
         <dl className="text-xs font-mono text-zinc-400 space-y-1">
           <div>deposit: {quote.depositAddress}</div>
           <div>
-            amount: {quote.amountIn} ({quote.amountInUsd} USD) via {quote.depositContractId}
+            amount: {quote.amountIn} (~{quote.amountInUsd} USD) via {quote.depositContractId}
           </div>
         </dl>
       )}

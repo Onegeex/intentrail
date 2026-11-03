@@ -15,26 +15,35 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
   return raw === "1" || raw.toLowerCase() === "true" || raw === "yes";
 }
 
+/**
+ * Operator kill switch. When true, mainnet Live mode is off everywhere.
+ * Default false → hosted site can serve ≤$1 mainnet swaps (still per-user gated).
+ */
+export function isMainnetDisabledByOperator(): boolean {
+  return parseBool(process.env.MAINNET_DISABLED, false);
+}
+
+/** Hosted Live mode may request mainnet unless operator disabled it. */
+export function isMainnetLiveAllowed(): boolean {
+  return !isMainnetDisabledByOperator();
+}
+
+/** Default display network for SSR (UI may switch to mainnet in Live mode). */
 export function resolveNetwork(): NetworkId {
   const requested = (process.env.NEAR_NETWORK || "testnet").toLowerCase();
-  const allowMainnet = parseBool(process.env.ALLOW_MAINNET, false);
-  if (requested === "mainnet" && allowMainnet) return "mainnet";
+  if (requested === "mainnet" && isMainnetLiveAllowed()) return "mainnet";
   return "testnet";
 }
 
-export function isMainnetEnabled(): boolean {
-  return resolveNetwork() === "mainnet";
-}
-
+/** @deprecated Prefer isMainnetLiveAllowed + per-request liveMode */
 export function isExecutionEnabled(): boolean {
-  return isMainnetEnabled();
+  return isMainnetLiveAllowed();
 }
 
 export function isDryQuoteApiEnabled(): boolean {
   return parseBool(process.env.ALLOW_DRY_QUOTES, true);
 }
 
-/** Optional NEAR AI Cloud — off by default; needs NEAR_AI_API_KEY. */
 export function isNearAiEnabled(): boolean {
   return (
     parseBool(process.env.NEAR_AI_ENABLED, false) &&
@@ -61,8 +70,9 @@ export const HARD_CAPS = {
   minTradeUsd: 1,
   /** Hard cap for real mainnet execution (server + client). */
   maxMainnetSwapUsd: 1,
+  /** Per-wallet daily mainnet spend cap */
+  maxMainnetWalletDailyUsd: 3,
   maxFeeBps: 50,
-  /** Agent Economy: premium signal micro-payment */
   signalFeeUsd: 0.05,
   maxSignalFeePerCallUsd: 0.1,
   dailySignalSpendCapUsd: 2,

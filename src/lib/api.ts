@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { checkRateLimit, getClientIp } from "./rate-limit";
+import { checkRateLimit, checkWalletRateLimit, getClientIp } from "./rate-limit";
 
 /** Client-safe errors only. Never pass err.message / stack / paths here. */
 export function jsonError(
@@ -15,6 +15,16 @@ export function enforceRateLimit(req: Request, route: string) {
   const result = checkRateLimit(ip, route);
   if (!result.ok) {
     return jsonError(429, "Rate limit exceeded", {
+      retryAfterSec: result.retryAfterSec,
+    });
+  }
+  return null;
+}
+
+export function enforceWalletRateLimit(wallet: string, route: string) {
+  const result = checkWalletRateLimit(wallet, route);
+  if (!result.ok) {
+    return jsonError(429, "Wallet rate limit exceeded", {
       retryAfterSec: result.retryAfterSec,
     });
   }

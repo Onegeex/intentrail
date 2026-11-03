@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveNetwork, isMainnetEnabled } from "@/lib/config";
+import { resolveNetwork, isMainnetLiveAllowed } from "@/lib/config";
 import { getPolicy } from "@/lib/store";
 
 export const runtime = "nodejs";
@@ -10,7 +10,7 @@ export async function GET() {
     ok: true,
     name: "IntentRail",
     network: resolveNetwork(),
-    mainnetEnabled: isMainnetEnabled(),
+    mainnetLiveAllowed: isMainnetLiveAllowed(),
     killSwitch: policy.killSwitch,
     time: new Date().toISOString(),
   });

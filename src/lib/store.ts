@@ -37,6 +37,8 @@ export interface RuntimeState {
   spendDay: string;
   spentUsdToday: number;
   signalSpentUsdToday: number;
+  /** per-wallet mainnet spend { day, spentUsd } */
+  walletSpend: Record<string, { day: string; spentUsd: number }>;
   proposals: Record<string, TradeProposal>;
   /** proposalIds that a human approved (still must re-check guardrails before sign) */
   approved: Record<string, string>;
@@ -57,6 +59,7 @@ function emptyState(opts?: { killSwitch?: boolean; untrusted?: boolean }): Runti
     spendDay: todayUtc(),
     spentUsdToday: 0,
     signalSpentUsdToday: 0,
+    walletSpend: {},
     proposals: {},
     approved: {},
     updatedAt: new Date().toISOString(),
@@ -75,6 +78,7 @@ function rollDay(state: RuntimeState): void {
     state.signalSpentUsdToday = 0;
   }
   if (typeof state.signalSpentUsdToday !== "number") state.signalSpentUsdToday = 0;
+  if (!state.walletSpend || typeof state.walletSpend !== "object") state.walletSpend = {};
 }
 
 async function ensureLoaded(): Promise<RuntimeState> {
@@ -269,4 +273,27 @@ export async function getSignalSpentToday(): Promise<number> {
   const state = await ensureLoaded();
   rollDay(state);
   return state.signalSpentUsdToday;
+}
+
+export async function getWalletSpentToday(accountId: string): Promise<number> {
+  const state = await ensureLoaded();
+  rollDay(state);
+  const key = accountId.trim().toLowerCase();
+  const row = state.walletSpend[key];
+  if (!row || row.day !== todayUtc()) return 0;
+  return row.spentUsd;
+}
+
+export async function recordWalletSpend(accountId: string, usd: number): Promise<void> {
+  const state = await ensureLoaded();
+  rollDay(state);
+  const key = accountId.trim().toLowerCase();
+  const row = state.walletSpend[key];
+  if (!row || row.day !== todayUtc()) {
+    state.walletSpend[key] = { day: todayUtc(), spentUsd: Math.max(0, usd) };
+  } else {
+    row.spentUsd += Math.max(0, usd);
+  }
+  persist(state);
+  await flushPersist();
 }

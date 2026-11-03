@@ -9,9 +9,15 @@ import type { GuardResult, QuoteResult, TradeProposal } from "@/lib/types";
 export function AgentPanel({
   demo = false,
   network = "testnet",
+  liveMode = false,
+  riskAcknowledged = false,
+  mainnetLiveAllowed = true,
 }: {
   demo?: boolean;
   network?: NearNetwork;
+  liveMode?: boolean;
+  riskAcknowledged?: boolean;
+  mainnetLiveAllowed?: boolean;
 }) {
   const [fromSymbol, setFromSymbol] = useState("USDC");
   const [toSymbol, setToSymbol] = useState("NEAR");
@@ -173,7 +179,7 @@ export function AgentPanel({
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-4">
         <h2 className="text-base font-semibold text-white">Proof agent (trader / farmer)</h2>
         <p className="text-xs text-zinc-500">
-          Shows the seatbelt on a fee-aware proposal. Builders: use{" "}
+          Shows the seatbelt on a fee-aware proposal. For Live mainnet, set Amount to $1. Builders: use{" "}
           <code className="text-zinc-400">/api/guard/check</code> directly.
         </p>
         <div className="grid sm:grid-cols-3 gap-3">
@@ -251,7 +257,14 @@ export function AgentPanel({
       )}
 
       {!demo && !blockedDemo && (
-        <ExecutePanel proposal={proposal} network={network} demo={demo} />
+        <ExecutePanel
+          proposal={proposal}
+          network={network}
+          demo={demo}
+          liveMode={liveMode}
+          riskAcknowledged={riskAcknowledged}
+          mainnetLiveAllowed={mainnetLiveAllowed}
+        />
       )}
     </section>
   );

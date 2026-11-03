@@ -84,3 +84,12 @@ If you find a vulnerability in IntentRail, do not open a public issue with explo
 ## Seatbelt API
 
 `POST /api/guard/check` exposes the same fail-closed engine (`src/lib/guardrails.ts`) for other agents.
+
+
+## Hosted Live mode (≤$1 on Vercel)
+
+- Visitors enable **Live mode** in the UI, select **mainnet**, connect their wallet, acknowledge risk, and confirm each swap.
+- No local env dual-flag required. Operator kill switch: `MAINNET_DISABLED=true` disables mainnet Live globally (default allowed).
+- Caps: $1/swap, $3/wallet/day, allowlist, slippage, consensus, kill switch, IP + wallet rate limits.
+- Flow: prepare non-dry 1Click quote → validate `depositAddress` + amount from 1Click → client re-checks → user signs `ft_transfer` → poll status.
+- Server never holds keys, never auto-signs, never submits deposits.

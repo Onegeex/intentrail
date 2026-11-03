@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { enforceRateLimit, internalError } from "@/lib/api";
-import { HARD_CAPS, resolveNetwork } from "@/lib/config";
+import { HARD_CAPS, isMainnetLiveAllowed, resolveNetwork } from "@/lib/config";
 import { evaluateProposal } from "@/lib/guardrails";
 import { defaultPriceSymbols, fetchPrices } from "@/lib/prices";
 import {
@@ -126,6 +126,7 @@ export async function GET(req: Request) {
       cached: priceResult.cached,
       asOf: priceResult.asOf || new Date().toISOString(),
       network: resolveNetwork(),
+      mainnetLiveAllowed: isMainnetLiveAllowed(),
       prices: priceResult.prices,
       policy,
       hardCaps: HARD_CAPS,
