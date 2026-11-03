@@ -4,11 +4,13 @@ import { HARD_CAPS, resolveNetwork } from "@/lib/config";
 import { evaluateProposal } from "@/lib/guardrails";
 import { defaultPriceSymbols, fetchPrices } from "@/lib/prices";
 import {
- getPolicy,
- getSpentToday,
- listRecentProposals,
- isApproved,
- saveProposal,, getSignalSpentToday } from "@/lib/store";
+  getPolicy,
+  getSpentToday,
+  getSignalSpentToday,
+  listRecentProposals,
+  isApproved,
+  saveProposal,
+} from "@/lib/store";
 import { buildProposal } from "@/lib/agent";
 import type { GuardResult, TradeProposal } from "@/lib/types";
 
@@ -33,10 +35,12 @@ export async function GET(req: Request) {
 
     let policy;
     let spentUsdToday = 0;
+    let signalSpentUsdToday = 0;
     let recent: TradeProposal[] = [];
     try {
       policy = await getPolicy();
       spentUsdToday = await getSpentToday();
+      signalSpentUsdToday = await getSignalSpentToday();
       recent = await listRecentProposals(8);
     } catch (err) {
       console.error("[intentrail] live state load:", err instanceof Error ? err.message : err);
