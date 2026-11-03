@@ -2,29 +2,26 @@
 
 **AI trading agent with hard guardrails on NEAR Intents.**
 
-Built for [NEAR HACKATHON](https://nearhackathon.com) (tracks: Unstoppable DeFi `defi`, AI Security & Defense `security`, Agent Economy `agents`).
+Built for [NEAR HACKATHON](https://nearhackathon.com).
+
+## Tracks covered
+
+| Track id | Track | How IntentRail fits |
+| --- | --- | --- |
+| `defi` | Unstoppable DeFi | Fee-aware agent + **NEAR Intents / 1Click** dry quotes |
+| `security` | AI Security & Defense | Fail-closed guardrails, kill switch, trade-only **function-call keys** |
+| `agents` | Agent Economy | Agent pays a **guardrailed micro-fee** for a premium signal |
+| `swarms` | AI Swarms | **Trend + Risk** agents vote; both must agree before PASS |
 
 ## What
 
-IntentRail proposes fee-aware token swaps, runs every proposal through a
-fail-closed guardrail engine (max loss, daily spend cap, allowlist, slippage,
-kill switch), requires **human approval**, then requests a **dry** NEAR Intents
-/ 1Click quote. It never holds user private keys.
+IntentRail proposes fee-aware swaps, runs a two-agent swarm vote, optionally buys a simulated premium signal (capped), fetches a **dry** NEAR Intents 1Click quote (live when possible, else clearly **simulated**), then applies fail-closed guardrails. Human approval is required before any execute. The app never holds private keys.
 
-## Why
+## Why NEAR
 
-AI agents that can spend need rails, not vibes. NEAR gives us:
-
-- **NEAR Intents / 1Click** — cross-chain settlement without a custodian
-- **Function-call access keys** — trade-only keys with low allowance (no full account drain)
-- **Wallet Selector** — user signs; the server never sees a seed
-
-## Live home (`/`)
-
-- Real-time CoinGecko prices for NEAR, USDC, BTC, ETH (15s server cache + client refresh)
-- Live agent feed with PASS/BLOCK recomputed on every poll
-- Guardrail status (kill switch, daily cap used) and Live / Degraded indicator
-- Graceful fallback to demo prices if the public API fails
+- **NEAR Intents / 1Click** — cross-chain quotes with `dry: true` (no deposit address)
+- **Function-call access keys** — trade-only scope (`intents.near` methods on mainnet)
+- **Wallet Selector / MyNearWallet** — user signs; server never sees a seed
 
 ## How to run
 
@@ -34,61 +31,54 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open http://localhost:3000 or **http://localhost:3000/demo** (no wallet).
+Open http://localhost:3000 or **/demo** (no wallet).
 
 ```bash
 npm run build && npm start
 ```
 
-### Environment
+### Environment (high level)
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `NEAR_NETWORK` | `testnet` | `mainnet` ignored unless `ALLOW_MAINNET=true` |
-| `ALLOW_MAINNET` | `false` | Dual flag required for mainnet |
-| `MAX_LOSS_PER_TRADE_USD` | `2` | Capped by hard max $10 |
-| `DAILY_SPEND_CAP_USD` | `25` | Capped by hard max $100 |
-| `MAX_SLIPPAGE_BPS` | `100` | Capped by hard max 200 |
-| `REQUIRE_HUMAN_APPROVAL` | `true` | Keep on for demos/judging |
-| `RATE_LIMIT_RPM` | `30` | Per IP, mutating/proposal routes |
-| `ONECLICK_JWT` | _(empty)_ | Optional; never commit |
+| `NEAR_NETWORK` | `testnet` | Mainnet ignored unless `ALLOW_MAINNET=true` |
+| `ALLOW_MAINNET` | `false` | Dual flag for execution |
+| `ALLOW_DRY_QUOTES` | `true` | Live 1Click dry API (read-only) |
+| `NEAR_AI_ENABLED` | `false` | Optional NEAR AI Cloud enrichment (needs `NEAR_AI_API_KEY`) |
+| `REQUIRE_HUMAN_APPROVAL` | `true` | Keep on |
 
-**Never put private keys or seed phrases in env files that get committed.**
+Never put private keys or seed phrases in env files that get committed.
 
 ## Tech used (NEAR)
 
-- NEAR Wallet Selector + MyNearWallet (`@near-wallet-selector/*`)
-- `near-api-js` (available for account/key introspection; signing stays in wallet)
-- NEAR Intents **1Click Swap API** (`https://1click.chaindefuser.com`) with `dry: true`
-- Public CoinGecko prices (allowlisted symbols only)
-- Next.js 15 (App Router) on Vercel
+- NEAR Wallet Selector + MyNearWallet
+- `near-api-js` available; signing stays in wallet
+- NEAR Intents **1Click Swap API** (`dry: true`)
+- Trade-only FC key scope → `intents.near` / `execute_intents` + `simulate_intents` (mainnet)
+- Optional NEAR AI Cloud (env-flagged roadmap hook)
+- CoinGecko public prices
+- Next.js 15 on Vercel
 
-Per HACKATHON.md Q-007 there is **no Intents testnet**. On testnet, dry-quotes are stubbed; set the mainnet dual flag for live dry quotes (still no deposit address).
+HACKATHON.md Q-007: **no Intents testnet**. Dry quotes use the public mainnet 1Click API; execution stays off unless the dual mainnet flag is set.
 
-## Do X → see Y (judges / AI screeners)
+## Do X → see Y (judges)
 
-1. Open `/demo` → see the amber **Demo mode** banner and guardrail panel with kill switch **off**.
-2. Click **Propose trade** (USDC→NEAR, $5) → see a proposal card with a green **PASS** or red **BLOCK** badge and a checklist (`KILL_SWITCH`, `ALLOWLIST`, `MAX_LOSS`, …).
-3. Toggle **Kill switch** on → Propose again → see **BLOCK** with `KILL_SWITCH: Kill switch is ON`.
-4. Toggle kill switch **off**. Propose a PASSing trade → click **Approve (human)** → see confirmation that approval was recorded.
-5. Click **Dry-quote via NEAR Intents** → see a quote panel marked **stub** on testnet (or a live dry quote if mainnet flags are set).
-6. Open `/security` → see this repo's threat model and non-negotiables.
-7. Connect a wallet on `/` (optional) → MyNearWallet modal opens; the app never asks for a seed phrase.
+1. Open `/` → see **Live** prices (NEAR/USDC/BTC/ETH), guardrail status, agent feed.
+2. Click **Propose trade** (USDC→NEAR, $5) → see **Swarm votes** (trend + risk), signal fee line, dry quote panel labeled **live 1Click** or **simulated**, and PASS/BLOCK checklist including `SWARM_AGREE`, `FEE_AWARE`, `QUOTE_DRY`.
+3. Toggle **Kill switch** on → Propose again → **BLOCK** / `KILL_SWITCH`.
+4. Connect wallet → modal requests a **trade-only function-call key** (contract + methods shown). Revoke steps are on the page.
+5. Open `/demo` → same flow without a wallet.
+6. Open `/security` → threat model.
 
-## Project layout
+## Real vs simulated
 
-```
-src/app/api/     prices, propose, quote, guardrails, kill-switch, health
-src/lib/         agent, guardrails, intents, tokens, validation, store, rate-limit
-src/components/  AgentPanel, ProposalCard, GuardrailPanel, WalletConnect, KillSwitch
-SECURITY.md      Threat model and controls
-```
-
-## Disclosure
-
-Inspired by real fee-aware / stop-loss farming workflows the author runs elsewhere.
-Only the NEAR Intents + guardrail integration in this repository is in scope for
-NEAR HACKATHON judging (HACKATHON.md Q-002).
+| Piece | Status |
+| --- | --- |
+| CoinGecko prices | Live (demo fallback) |
+| 1Click dry quote | Live when API succeeds; else **simulated** label |
+| Swarm votes | Deterministic agents (optional NEAR AI enrich if flagged) |
+| Signal micro-payment | **Simulated** (capped; same fail-closed ledger) |
+| Execution / deposits | **Disabled** unless mainnet dual flag |
 
 ## License
 

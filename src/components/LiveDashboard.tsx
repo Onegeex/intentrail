@@ -266,7 +266,34 @@ export function LiveDashboard() {
                       {formatTime(proposal.createdAt)} · stop {proposal.stopLossPct}% ·
                       slip {proposal.slippageBps}bps
                       {approved ? " · approved" : ""}
+                      {proposal.swarmAgreed === true
+                        ? " · swarm✓"
+                        : proposal.votes
+                          ? " · swarm✗"
+                          : ""}
+                      {proposal.signalPayment
+                        ? proposal.signalPayment.ok
+                          ? " · signal$"
+                          : " · signal✗"
+                        : ""}
                     </p>
+                    {proposal.votes && proposal.votes.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {proposal.votes.map((v) => (
+                          <span
+                            key={v.agent}
+                            title={v.reason}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-mono border ${
+                              v.vote === "yes"
+                                ? "border-emerald-800 text-emerald-400"
+                                : "border-red-900 text-red-400"
+                            }`}
+                          >
+                            {v.agent}:{v.vote}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <span
                     className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${

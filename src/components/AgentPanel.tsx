@@ -13,7 +13,7 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
   const [quote, setQuote] = useState<QuoteResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [approved, setApproved] = useState(false);
+  const [, setApproved] = useState(false);
 
   async function propose() {
     setBusy(true);
@@ -35,6 +35,7 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
       }
       setProposal(data.proposal);
       setGuard(data.guard);
+      if (data.quote) setQuote(data.quote);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "error");
     } finally {
@@ -70,10 +71,6 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
 
   async function dryQuote() {
     if (!proposal) return;
-    if (!approved) {
-      setMsg("Approve the proposal first (human-in-the-loop).");
-      return;
-    }
     setBusy(true);
     setMsg(null);
     try {
@@ -84,12 +81,12 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
       });
       const data = await res.json();
       if (data.guard) setGuard(data.guard);
+      if (data.quote) setQuote(data.quote);
       if (!data.ok) {
         setMsg(data.error || "Quote failed");
-        setQuote(data.quote || null);
         return;
       }
-      setQuote(data.quote);
+      setMsg(data.quote?.simulated ? "Simulated dry quote (fallback)." : "Live 1Click dry quote.");
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "error");
     } finally {

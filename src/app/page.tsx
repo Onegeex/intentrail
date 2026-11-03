@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AgentPanel } from "@/components/AgentPanel";
 import { GuardrailPanel } from "@/components/GuardrailPanel";
 import { LiveDashboard } from "@/components/LiveDashboard";
+import { FunctionCallKeyPanel } from "@/components/FunctionCallKeyPanel";
 import { WalletConnect } from "@/components/WalletConnect";
 import { resolveNetwork } from "@/lib/config";
 
@@ -40,6 +41,8 @@ export default function HomePage() {
       </header>
 
       <LiveDashboard />
+
+      <FunctionCallKeyPanel network={network} />
 
       <div className="grid lg:grid-cols-1 gap-6">
         <GuardrailPanel />

@@ -1,5 +1,8 @@
 import type { GuardrailPolicy, NetworkId } from "./types";
 import { ALLOWLISTED_SYMBOLS } from "./tokens";
+import { TRADE_ONLY_FC_KEY, fcKeyScope as getFcKeyScope } from "./fc-key";
+
+export { TRADE_ONLY_FC_KEY, getFcKeyScope };
 
 function parsePositiveNumber(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -12,25 +15,31 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
   return raw === "1" || raw.toLowerCase() === "true" || raw === "yes";
 }
 
-/**
- * Network selection is fail-closed:
- * - Default = testnet
- * - Mainnet only when NEAR_NETWORK=mainnet AND ALLOW_MAINNET=true
- */
 export function resolveNetwork(): NetworkId {
   const requested = (process.env.NEAR_NETWORK || "testnet").toLowerCase();
   const allowMainnet = parseBool(process.env.ALLOW_MAINNET, false);
-  if (requested === "mainnet") {
-    if (!allowMainnet) {
-      return "testnet";
-    }
-    return "mainnet";
-  }
+  if (requested === "mainnet" && allowMainnet) return "mainnet";
   return "testnet";
 }
 
 export function isMainnetEnabled(): boolean {
   return resolveNetwork() === "mainnet";
+}
+
+export function isExecutionEnabled(): boolean {
+  return isMainnetEnabled();
+}
+
+export function isDryQuoteApiEnabled(): boolean {
+  return parseBool(process.env.ALLOW_DRY_QUOTES, true);
+}
+
+/** Optional NEAR AI Cloud — off by default; needs NEAR_AI_API_KEY. */
+export function isNearAiEnabled(): boolean {
+  return (
+    parseBool(process.env.NEAR_AI_ENABLED, false) &&
+    Boolean(process.env.NEAR_AI_API_KEY && process.env.NEAR_AI_API_KEY.length > 8)
+  );
 }
 
 export function getRpcUrl(network: NetworkId = resolveNetwork()): string {
@@ -44,13 +53,17 @@ export function getRateLimitRpm(): number {
   return Math.min(120, Math.max(5, parsePositiveNumber(process.env.RATE_LIMIT_RPM, 30)));
 }
 
-/** Hard caps — env can only tighten within these bounds, never exceed. */
 export const HARD_CAPS = {
   maxLossPerTradeUsd: 10,
   dailySpendCapUsd: 100,
   maxSlippageBps: 200,
   maxTradeUsd: 50,
   minTradeUsd: 1,
+  maxFeeBps: 50,
+  /** Agent Economy: premium signal micro-payment */
+  signalFeeUsd: 0.05,
+  maxSignalFeePerCallUsd: 0.1,
+  dailySignalSpendCapUsd: 2,
 } as const;
 
 export function getDefaultPolicy(): Omit<GuardrailPolicy, "killSwitch"> {
@@ -77,12 +90,16 @@ export function getDefaultPolicy(): Omit<GuardrailPolicy, "killSwitch"> {
 
 export const ONECLICK_BASE = "https://1click.chaindefuser.com";
 
-/** Contracts the agent is allowed to call. Empty on purpose for Day 1 —
- * execution goes through wallet-signed 1Click deposits only, never arbitrary calls. */
 export const ALLOWED_CONTRACT_METHODS: ReadonlyArray<{
   contract: string;
   methods: readonly string[];
 }> = [
-  // Intentionally empty: no arbitrary contract calls from the agent.
-  // Future: add intents.near verifier methods only after review.
+  {
+    contract: TRADE_ONLY_FC_KEY.mainnetContract,
+    methods: TRADE_ONLY_FC_KEY.methodsMainnet,
+  },
+  {
+    contract: TRADE_ONLY_FC_KEY.testnetContract,
+    methods: TRADE_ONLY_FC_KEY.methodsTestnet,
+  },
 ];

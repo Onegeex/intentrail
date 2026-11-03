@@ -36,6 +36,7 @@ export interface RuntimeState {
   /** YYYY-MM-DD UTC */
   spendDay: string;
   spentUsdToday: number;
+  signalSpentUsdToday: number;
   proposals: Record<string, TradeProposal>;
   /** proposalIds that a human approved (still must re-check guardrails before sign) */
   approved: Record<string, string>;
@@ -55,6 +56,7 @@ function emptyState(opts?: { killSwitch?: boolean; untrusted?: boolean }): Runti
     killSwitch: opts?.killSwitch ?? false,
     spendDay: todayUtc(),
     spentUsdToday: 0,
+    signalSpentUsdToday: 0,
     proposals: {},
     approved: {},
     updatedAt: new Date().toISOString(),
@@ -70,7 +72,9 @@ function rollDay(state: RuntimeState): void {
   if (state.spendDay !== todayUtc()) {
     state.spendDay = todayUtc();
     state.spentUsdToday = 0;
+    state.signalSpentUsdToday = 0;
   }
+  if (typeof state.signalSpentUsdToday !== "number") state.signalSpentUsdToday = 0;
 }
 
 async function ensureLoaded(): Promise<RuntimeState> {
@@ -251,4 +255,18 @@ export async function listRecentProposals(limit = 12): Promise<TradeProposal[]> 
   return Object.values(state.proposals)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
     .slice(0, Math.max(1, Math.min(50, limit)));
+}
+
+export async function recordSignalSpend(usd: number): Promise<void> {
+  const state = await ensureLoaded();
+  rollDay(state);
+  state.signalSpentUsdToday += Math.max(0, usd);
+  persist(state);
+  await flushPersist();
+}
+
+export async function getSignalSpentToday(): Promise<number> {
+  const state = await ensureLoaded();
+  rollDay(state);
+  return state.signalSpentUsdToday;
 }

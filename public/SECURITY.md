@@ -52,3 +52,22 @@ Env vars can only **tighten** within `HARD_CAPS` in `src/lib/config.ts`, never e
 ## Reporting
 
 If you find a vulnerability in IntentRail, do not open a public issue with exploit details. Email the team lead listed in the submission and rotate any exposed credentials immediately.
+
+
+## Trade-only function-call keys (Day 2)
+
+- Wallet Selector requests a **FunctionCallAccessKey** for a single allowlisted contract.
+- Mainnet: `intents.near` methods `execute_intents`, `simulate_intents` only; small allowance (~0.25 NEAR).
+- Testnet: `wrap.testnet` deposit/withdraw only (Intents has no testnet — Q-007).
+- IntentRail **never** generates, stores, or logs private keys or seeds.
+- Revoke in MyNearWallet → Security / Keys.
+
+## Dry quotes vs execution
+
+- `dry: true` 1Click quotes are read-only (no deposit address).
+- Execution requires `NEAR_NETWORK=mainnet` **and** `ALLOW_MAINNET=true`, plus human approval + wallet sign.
+
+## Swarm & Agent Economy
+
+- Trend + Risk votes must both be `yes` (`SWARM_AGREE`) or the proposal is BLOCKed.
+- Premium signal fees are simulated micro-payments with per-call and daily caps; kill switch blocks purchases.

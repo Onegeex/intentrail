@@ -4,12 +4,11 @@ import { HARD_CAPS, resolveNetwork } from "@/lib/config";
 import { evaluateProposal } from "@/lib/guardrails";
 import { defaultPriceSymbols, fetchPrices } from "@/lib/prices";
 import {
-  getPolicy,
-  getSpentToday,
-  listRecentProposals,
-  isApproved,
-  saveProposal,
-} from "@/lib/store";
+ getPolicy,
+ getSpentToday,
+ listRecentProposals,
+ isApproved,
+ saveProposal,, getSignalSpentToday } from "@/lib/store";
 import { buildProposal } from "@/lib/agent";
 import type { GuardResult, TradeProposal } from "@/lib/types";
 
@@ -127,6 +126,7 @@ export async function GET(req: Request) {
       policy,
       hardCaps: HARD_CAPS,
       spentUsdToday,
+      signalSpentUsdToday,
       feed,
       refreshHintSec: 15,
     });

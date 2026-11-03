@@ -3,23 +3,20 @@
 import { setupWalletSelector, type WalletSelector } from "@near-wallet-selector/core";
 import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
+import { fcKeyScope } from "./fc-key";
 
 export type NearNetwork = "testnet" | "mainnet";
+
+export { fcKeyScope };
 
 let selectorPromise: Promise<WalletSelector> | null = null;
 let modal: WalletSelectorModal | null = null;
 let cachedNetwork: NearNetwork | null = null;
 
-function contractFor(network: NearNetwork): string {
-  // No arbitrary calls — wallet connect is for identity + future signed intents.
-  // wrap.near / wrap.testnet are standard NEP-141 wrappers, not agent-controlled.
-  return network === "mainnet" ? "wrap.near" : "wrap.testnet";
-}
-
 /**
  * Wallet-only signing. Never accepts, stores, or logs private keys or seeds.
- * Function-call access keys (trade-only, no transfers, low allowance) are the
- * intended production model — see SECURITY.md.
+ * Connecting requests a FunctionCallAccessKey scoped to the trade-only contract
+ * + method allowlist (wallet holds the key).
  */
 export async function getSelector(network: NearNetwork): Promise<WalletSelector> {
   if (selectorPromise && cachedNetwork === network) return selectorPromise;
@@ -40,15 +37,16 @@ export async function getSelector(network: NearNetwork): Promise<WalletSelector>
 
 export async function getModal(network: NearNetwork): Promise<WalletSelectorModal> {
   const selector = await getSelector(network);
+  const scope = fcKeyScope(network);
   if (!modal || cachedNetwork !== network) {
     modal = setupModal(selector, {
-      contractId: contractFor(network),
-      // Empty methodNames => wallet will still require explicit user approval
-      // per transaction; we do not request a broad function-call key here.
-      methodNames: [],
+      contractId: scope.contractId,
+      methodNames: scope.methodNames,
       theme: "dark",
       description:
-        "IntentRail never asks for your seed phrase. Every trade needs your approval. Prefer a restricted function-call key (trade-only, no transfers).",
+        `IntentRail requests a trade-only function-call key for ${scope.contractId} ` +
+        `(methods: ${scope.methodNames.join(", ")}). Never share a seed phrase. ` +
+        `Revoke anytime in MyNearWallet → Security.`,
     });
   }
   return modal;

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { enforceRateLimit, jsonError, internalError } from "@/lib/api";
 import { buildProposal } from "@/lib/agent";
+import { buyPremiumSignal } from "@/lib/economy";
 import { evaluateProposal } from "@/lib/guardrails";
+import { requestDryQuote } from "@/lib/intents";
+import { optionalNearAiReason } from "@/lib/near-ai";
 import { fetchPrices } from "@/lib/prices";
 import { saveProposal } from "@/lib/store";
 import { proposeBodySchema } from "@/lib/validation";
@@ -37,6 +40,8 @@ export async function POST(req: Request) {
     const fromPrice = prices.find((p) => p.symbol === fromSymbol.toUpperCase())!;
     const toPrice = prices.find((p) => p.symbol === toSymbol.toUpperCase())!;
 
+    const signalPayment = await buyPremiumSignal();
+
     const proposal = buildProposal({
       fromSymbol,
       toSymbol,
@@ -45,14 +50,32 @@ export async function POST(req: Request) {
       toPrice,
       demo,
     });
+    proposal.signalPayment = signalPayment;
+    if (signalPayment.ok && signalPayment.premiumHint) {
+      proposal.rationale = `${proposal.rationale} ${signalPayment.premiumHint}`;
+    }
+
+    // Optional NEAR AI enrichment (env-flagged; never required)
+    const ai = await optionalNearAiReason(
+      `Trend vote and risk for ${fromSymbol}->${toSymbol} $${amountUsd}: ${proposal.rationale}`,
+    );
+    if (ai && proposal.votes?.[0]) {
+      proposal.votes[0] = {
+        ...proposal.votes[0],
+        reason: `${proposal.votes[0].reason} (NEAR AI: ${ai})`,
+      };
+    }
 
     await saveProposal(proposal);
-    const guard = await evaluateProposal(proposal);
+
+    const quote = await requestDryQuote(proposal);
+    const guard = await evaluateProposal(proposal, quote);
 
     return NextResponse.json({
       ok: true,
       proposal,
       guard,
+      quote,
       prices: { from: fromPrice, to: toPrice },
     });
   } catch (err) {

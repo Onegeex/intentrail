@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
-import { resolveNetwork, HARD_CAPS } from "./config";
+import { resolveNetwork, HARD_CAPS, getDefaultPolicy } from "./config";
 import { getTokenBySymbol } from "./tokens";
+import { riskAgentVote, swarmAgree, trendAgentVote } from "./swarm";
 import type { PriceSnapshot, TradeProposal, TradeSide } from "./types";
 
 const FEE_BPS_ASSUMED = 20; // ~0.2% without 1Click JWT (HACKATHON Q-006)
@@ -55,11 +56,15 @@ export function buildProposal(input: {
   const feeUsd = (amountUsd * FEE_BPS_ASSUMED) / 10_000;
   const stopLossPct = DEFAULT_STOP_PCT;
 
-  // amountIn in smallest units of `from`
+  // amountIn in smallest units of `from` (full decimals for USDC=6; cap pad for 18/24)
   const fromUnits = amountUsd / Math.max(input.fromPrice.priceUsd, 1e-9);
-  const amountIn = BigInt(
-    Math.max(1, Math.floor(fromUnits * 10 ** Math.min(from.decimals, 8))),
-  ).toString();
+  let amountIn: string;
+  if (from.decimals <= 8) {
+    amountIn = String(Math.max(1, Math.round(fromUnits * 10 ** from.decimals)));
+  } else {
+    const micros = Math.max(1, Math.floor(fromUnits * 1e8));
+    amountIn = `${micros}${"0".repeat(from.decimals - 8)}`;
+  }
 
   const toUnits =
     (amountUsd * (1 - FEE_BPS_ASSUMED / 10_000)) /
@@ -81,6 +86,21 @@ export function buildProposal(input: {
     !(trend === "down" && to.symbol !== "USDC") &&
     !(trend === "flat" && amountUsd > 10);
 
+  const policy = getDefaultPolicy();
+  const votes = [
+    trendAgentVote({ side, toPrice: input.toPrice }),
+    riskAgentVote({
+      amountUsd,
+      stopLossPct,
+      maxLossPerTradeUsd: policy.maxLossPerTradeUsd,
+      feeAwareOk: feeOkFinal,
+    }),
+  ];
+  const agreed = swarmAgree(votes);
+  if (!agreed) {
+    rationale = `${rationale} Swarm did not agree.`;
+  }
+
   return {
     id: randomUUID(),
     createdAt: new Date().toISOString(),
@@ -98,5 +118,7 @@ export function buildProposal(input: {
     feeAwareOk: feeOkFinal,
     network: resolveNetwork(),
     demo: Boolean(input.demo),
+    votes,
+    swarmAgreed: agreed,
   };
 }

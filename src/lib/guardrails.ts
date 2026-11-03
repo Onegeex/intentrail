@@ -1,13 +1,16 @@
 import { HARD_CAPS } from "./config";
 import { getPolicy, getSpentToday } from "./store";
 import { isAllowlistedSymbol } from "./tokens";
-import type { GuardCheck, GuardResult, TradeProposal } from "./types";
+import type { GuardCheck, GuardResult, QuoteResult, TradeProposal } from "./types";
 
 /**
  * Server-side guardrail engine. Fail closed: any failed check => BLOCK.
- * Must be re-run immediately before any signing / quote execution.
+ * Optional real dry-quote tightens FEE_AWARE / SLIPPAGE using live numbers.
  */
-export async function evaluateProposal(proposal: TradeProposal): Promise<GuardResult> {
+export async function evaluateProposal(
+  proposal: TradeProposal,
+  quote?: QuoteResult | null,
+): Promise<GuardResult> {
   const policy = await getPolicy();
   const spent = await getSpentToday();
   const checks: GuardCheck[] = [];
@@ -16,7 +19,6 @@ export async function evaluateProposal(proposal: TradeProposal): Promise<GuardRe
     checks.push({ code, ok, detail });
   };
 
-  // 1. Kill switch
   push(
     "KILL_SWITCH",
     !policy.killSwitch,
@@ -25,7 +27,6 @@ export async function evaluateProposal(proposal: TradeProposal): Promise<GuardRe
       : "Kill switch off",
   );
 
-  // 2. Allowlist
   const fromOk = isAllowlistedSymbol(proposal.fromSymbol);
   const toOk = isAllowlistedSymbol(proposal.toSymbol);
   push(
@@ -36,7 +37,6 @@ export async function evaluateProposal(proposal: TradeProposal): Promise<GuardRe
       : "Token pair not on allowlist",
   );
 
-  // 3. Amount bounds
   const amountOk =
     Number.isFinite(proposal.amountUsd) &&
     proposal.amountUsd >= HARD_CAPS.minTradeUsd &&
@@ -49,7 +49,6 @@ export async function evaluateProposal(proposal: TradeProposal): Promise<GuardRe
       : "Amount outside hard caps",
   );
 
-  // 4. Max loss per trade (stop-loss sized notional risk)
   const riskUsd = proposal.amountUsd * (proposal.stopLossPct / 100);
   const lossOk = riskUsd <= policy.maxLossPerTradeUsd + 1e-9;
   push(
@@ -58,7 +57,6 @@ export async function evaluateProposal(proposal: TradeProposal): Promise<GuardRe
     `Estimated stop risk $${riskUsd.toFixed(2)} vs max $${policy.maxLossPerTradeUsd}`,
   );
 
-  // 5. Daily spend cap
   const dailyOk = spent + proposal.amountUsd <= policy.dailySpendCapUsd + 1e-9;
   push(
     "DAILY_CAP",
@@ -66,24 +64,59 @@ export async function evaluateProposal(proposal: TradeProposal): Promise<GuardRe
     `Spent today $${spent.toFixed(2)} + $${proposal.amountUsd} vs cap $${policy.dailySpendCapUsd}`,
   );
 
-  // 6. Slippage cap
-  const slipOk = proposal.slippageBps <= policy.maxSlippageBps;
+  const slipBps = quote?.slippageBps ?? proposal.slippageBps;
+  const slipOk = slipBps <= policy.maxSlippageBps;
   push(
     "SLIPPAGE",
     slipOk,
-    `${proposal.slippageBps} bps vs max ${policy.maxSlippageBps} bps`,
+    quote && !quote.simulated
+      ? `Quote slippage ${slipBps} bps vs max ${policy.maxSlippageBps} bps (live dry quote)`
+      : `${slipBps} bps vs max ${policy.maxSlippageBps} bps`,
   );
 
-  // 7. Fee-aware filter
+  // Fee-aware: prefer real quote fee bps when available
+  let feeOk = proposal.feeAwareOk;
+  let feeDetail = proposal.feeAwareOk
+    ? "Estimated edge covers fees"
+    : "Blocked: estimated edge does not cover fees";
+  if (quote?.ok && typeof quote.feeBps === "number") {
+    feeOk = quote.feeBps <= HARD_CAPS.maxFeeBps;
+    feeDetail = quote.simulated
+      ? `Simulated fee ~${quote.feeBps} bps (max ${HARD_CAPS.maxFeeBps})`
+      : `Live quote fee ~${quote.feeBps} bps / $${quote.feeUsd?.toFixed(4) ?? "?"} (max ${HARD_CAPS.maxFeeBps} bps)`;
+  }
+  push("FEE_AWARE", feeOk, feeDetail);
+
+  if (quote) {
+    push(
+      "QUOTE_DRY",
+      quote.dry === true && quote.ok,
+      quote.simulated
+        ? "Simulated dry quote (fallback)"
+        : "Live 1Click dry quote (no deposit address)",
+    );
+    push(
+      "EXECUTION_GATE",
+      true,
+      quote.executionEnabled
+        ? "Mainnet execution flags ON — still requires human approval + wallet sign"
+        : "Execution disabled (testnet default / dual flag off) — quote is read-only",
+    );
+  }
+
+  // Swarm: both Trend + Risk must vote yes
+  const votes = proposal.votes || [];
+  const swarmOk =
+    proposal.swarmAgreed === true ||
+    (votes.length >= 2 && votes.every((v) => v.vote === "yes"));
   push(
-    "FEE_AWARE",
-    proposal.feeAwareOk,
-    proposal.feeAwareOk
-      ? "Estimated edge covers fees"
-      : "Blocked: estimated edge does not cover fees",
+    "SWARM_AGREE",
+    swarmOk,
+    swarmOk
+      ? "Trend + Risk agents both voted yes"
+      : `Swarm rejected: ${votes.map((v) => `${v.agent}=${v.vote}`).join(", ") || "no votes"}`,
   );
 
-  // 8. Human approval required (decision layer — UI must still click Approve)
   push(
     "HUMAN_APPROVAL_POLICY",
     true,
@@ -92,7 +125,6 @@ export async function evaluateProposal(proposal: TradeProposal): Promise<GuardRe
       : "Human approval policy relaxed (still recommended)",
   );
 
-  // 9. Same-asset nonsense
   push(
     "DISTINCT_ASSETS",
     proposal.fromSymbol.toUpperCase() !== proposal.toSymbol.toUpperCase(),
