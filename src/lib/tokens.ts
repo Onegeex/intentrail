@@ -11,6 +11,7 @@ export const ALLOWLISTED_TOKENS: readonly TokenInfo[] = [
     name: "NEAR",
     coingeckoId: "near",
     intentsAssetId: "nep141:wrap.near",
+    nearContractId: "wrap.near",
     decimals: 24,
     allowlisted: true,
   },
@@ -22,6 +23,8 @@ export const ALLOWLISTED_TOKENS: readonly TokenInfo[] = [
     // Native USDC on NEAR (from 1Click /v0/tokens)
     intentsAssetId:
       "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+    nearContractId:
+      "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
     decimals: 6,
     allowlisted: true,
   },

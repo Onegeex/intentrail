@@ -10,6 +10,8 @@ export interface TokenInfo {
   name: string;
   coingeckoId: string;
   intentsAssetId: string;
+  /** NEP-141 contract id on NEAR (without nep141: prefix) for ORIGIN_CHAIN deposits */
+  nearContractId?: string;
   decimals: number;
   allowlisted: true;
 }
@@ -55,11 +57,17 @@ export interface TradeProposal {
   feeAwareOk: boolean;
   network: NetworkId;
   demo: boolean;
-  /** AI Swarms: both agents must vote yes before guardrails can PASS */
+  /** Multi-agent consensus feeding the guardrail */
   votes?: AgentVote[];
   swarmAgreed?: boolean;
-  /** Agent Economy: guardrailed micro-payment for premium signal */
+  /** Guardrailed agent spending (simulated micro-budget) */
   signalPayment?: SignalPayment;
+  /** Risk inputs used by consensus (honest audit trail) */
+  riskInputs?: {
+    volatilityPct: number;
+    drawdownPct: number;
+    positionUsd: number;
+  };
 }
 
 export interface GuardCheck {
@@ -85,7 +93,7 @@ export interface GuardrailPolicy {
 }
 
 export interface QuoteResult {
-  dry: true;
+  dry: boolean;
   ok: boolean;
   message: string;
   /** true = mock/simulated fallback (not a live 1Click response) */
@@ -101,13 +109,42 @@ export interface QuoteResult {
   timeEstimateSec?: number;
   correlationId?: string;
   deadline?: string;
-  /** Estimated fee in USD from quote in/out delta */
   feeUsd?: number;
-  /** Fee as bps of amountInUsd */
   feeBps?: number;
-  /** Slippage tolerance requested (bps) */
   slippageBps?: number;
-  /** App fee from quoteRequest if present */
   appFeeBps?: number;
   executionEnabled?: boolean;
+  /** Present only on non-dry executable quotes */
+  depositAddress?: string;
+  depositMemo?: string;
+  /** Contract to call for ORIGIN_CHAIN deposit (NEP-141) */
+  depositContractId?: string;
+  depositMethod?: "ft_transfer" | "native_transfer";
+}
+
+export interface BacktestTrade {
+  at: string;
+  side: "buy" | "skip";
+  priceUsd: number;
+  edgeBps: number;
+  feeBps: number;
+  pnlPct: number;
+  win: boolean;
+}
+
+export interface BacktestResult {
+  symbol: string;
+  days: number;
+  source: "coingecko" | "unavailable";
+  feeBpsAssumed: number;
+  trades: number;
+  winRatePct: number | null;
+  pnlAfterFeesPct: number | null;
+  maxDrawdownPct: number | null;
+  buyAndHoldPct: number | null;
+  vsBuyAndHoldPct: number | null;
+  label: string;
+  disclaimer: string;
+  points: number;
+  sampleTrades: BacktestTrade[];
 }

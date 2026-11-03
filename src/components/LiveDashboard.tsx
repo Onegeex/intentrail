@@ -267,14 +267,14 @@ export function LiveDashboard() {
                       slip {proposal.slippageBps}bps
                       {approved ? " · approved" : ""}
                       {proposal.swarmAgreed === true
-                        ? " · swarm✓"
+                        ? " · consensus✓"
                         : proposal.votes
-                          ? " · swarm✗"
+                          ? " · consensus✗"
                           : ""}
                       {proposal.signalPayment
                         ? proposal.signalPayment.ok
-                          ? " · signal$"
-                          : " · signal✗"
+                          ? " · spend$"
+                          : " · spend✗"
                         : ""}
                     </p>
                     {proposal.votes && proposal.votes.length > 0 && (

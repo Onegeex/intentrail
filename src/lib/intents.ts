@@ -1,4 +1,5 @@
 import {
+  HARD_CAPS,
   ONECLICK_BASE,
   isDryQuoteApiEnabled,
   isExecutionEnabled,
@@ -6,6 +7,48 @@ import {
 } from "./config";
 import { getTokenBySymbol } from "./tokens";
 import type { QuoteResult, TradeProposal } from "./types";
+
+function oneClickHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  const jwt = process.env.ONECLICK_JWT;
+  if (jwt && jwt.length > 0 && jwt.length < 4096) {
+    headers.Authorization = `Bearer ${jwt}`;
+  }
+  return headers;
+}
+
+function amountForProposal(proposal: TradeProposal): string {
+  const from = getTokenBySymbol(proposal.fromSymbol);
+  if (!from) return proposal.amountIn;
+  if (from.symbol === "USDC") {
+    return String(Math.max(1, Math.round(proposal.amountUsd * 1e6)));
+  }
+  if (proposal.amountIn && /^\d+$/.test(proposal.amountIn)) return proposal.amountIn;
+  if (from.symbol === "NEAR") {
+    // Caller should supply amountIn; rough pad if missing
+    const near = proposal.amountUsd / 3.5;
+    const whole = Math.max(1, Math.floor(near * 1e8));
+    return `${whole}${"0".repeat(16)}`;
+  }
+  return proposal.amountIn;
+}
+
+function feeFromQuote(
+  proposal: TradeProposal,
+  q: { amountInUsd?: string; amountOutUsd?: string },
+): { feeUsd: number; feeBps: number } {
+  const inUsd = Number(q.amountInUsd ?? proposal.amountUsd);
+  const outUsd = Number(q.amountOutUsd ?? 0);
+  const feeUsd =
+    Number.isFinite(inUsd) && Number.isFinite(outUsd)
+      ? Math.max(0, inUsd - outUsd)
+      : proposal.estimatedFeeUsd;
+  const feeBps = inUsd > 0 ? Math.round((feeUsd / inUsd) * 10_000) : 0;
+  return { feeUsd: Number(feeUsd.toFixed(6)), feeBps };
+}
 
 function simulatedQuote(proposal: TradeProposal, reason: string): QuoteResult {
   const feeUsd = proposal.estimatedFeeUsd;
@@ -32,12 +75,30 @@ function simulatedQuote(proposal: TradeProposal, reason: string): QuoteResult {
   };
 }
 
+type OneClickQuoteResponse = {
+  correlationId?: string;
+  quoteRequest?: {
+    deadline?: string;
+    slippageTolerance?: number;
+    appFees?: Array<{ fee?: number }>;
+  };
+  quote?: {
+    amountIn?: string;
+    amountInFormatted?: string;
+    amountOut?: string;
+    amountOutFormatted?: string;
+    amountInUsd?: string;
+    amountOutUsd?: string;
+    minAmountOut?: string;
+    timeEstimate?: number;
+    deadline?: string;
+    depositAddress?: string;
+    depositMemo?: string;
+  };
+};
+
 /**
- * NEAR Intents / 1Click dry quote (read-only).
- * HACKATHON.md Q-007: no Intents testnet — dry quotes use the public mainnet
- * 1Click API with dry:true (no depositAddress). Execution stays disabled unless
- * NEAR_NETWORK=mainnet AND ALLOW_MAINNET=true.
- * JWT optional (Q-006). Never logs Authorization headers or paths.
+ * NEAR Intents / 1Click dry quote (read-only). Never creates a deposit address.
  */
 export async function requestDryQuote(proposal: TradeProposal): Promise<QuoteResult> {
   const from = getTokenBySymbol(proposal.fromSymbol);
@@ -59,27 +120,8 @@ export async function requestDryQuote(proposal: TradeProposal): Promise<QuoteRes
     );
   }
 
-  // Amount must be integer base units. Rebuild from USD using token decimals when needed.
-  let amount = proposal.amountIn;
-  if (!/^\d+$/.test(amount) || amount === "0") {
-    const units = proposal.amountUsd / 1; // USD ≈ USDC; for others agent sets amountIn
-    const scaled = Math.floor(units * 10 ** Math.min(from.decimals, 8));
-    amount = String(Math.max(1, scaled));
-  }
-  // Prefer correct USDC (6 dec) sizing when from is USDC
-  if (from.symbol === "USDC") {
-    amount = String(Math.max(1, Math.round(proposal.amountUsd * 1e6)));
-  } else if (from.symbol === "NEAR") {
-    // yocto with 24 decimals — use 8-decimal milli precision then pad
-    const near = proposal.amountUsd / Math.max(1, 3.5); // rough; agent should set amountIn
-    const whole = Math.max(1, Math.floor(near * 1e8));
-    amount = proposal.amountIn && /^\d+$/.test(proposal.amountIn)
-      ? proposal.amountIn
-      : `${whole}${"0".repeat(16)}`;
-  }
-
+  const amount = amountForProposal(proposal);
   const deadline = new Date(Date.now() + 30 * 60_000).toISOString();
-  // Dry quotes must not create deposit addresses. Placeholders are never used for spend.
   const placeholder = "intentrail.near";
 
   const body = {
@@ -98,63 +140,23 @@ export async function requestDryQuote(proposal: TradeProposal): Promise<QuoteRes
     referral: "intentrail",
   };
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-  const jwt = process.env.ONECLICK_JWT;
-  if (jwt && jwt.length > 0 && jwt.length < 4096) {
-    headers.Authorization = `Bearer ${jwt}`;
-  }
-
   try {
     const res = await fetch(`${ONECLICK_BASE}/v0/quote`, {
       method: "POST",
-      headers,
+      headers: oneClickHeaders(),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(12_000),
     });
-
     if (!res.ok) {
-      // Do not leak upstream body/paths to clients
       console.error("[intentrail] 1Click quote status", res.status);
       return simulatedQuote(proposal, `1Click unavailable (${res.status}); using simulated`);
     }
-
-    const data = (await res.json()) as {
-      correlationId?: string;
-      timestamp?: string;
-      quoteRequest?: {
-        deadline?: string;
-        slippageTolerance?: number;
-        appFees?: Array<{ fee?: number }>;
-      };
-      quote?: {
-        amountIn?: string;
-        amountInFormatted?: string;
-        amountOut?: string;
-        amountOutFormatted?: string;
-        amountInUsd?: string;
-        amountOutUsd?: string;
-        minAmountOut?: string;
-        timeEstimate?: number;
-        deadline?: string;
-      };
-    };
-
+    const data = (await res.json()) as OneClickQuoteResponse;
     const q = data.quote;
     if (!q?.amountOut) {
       return simulatedQuote(proposal, "1Click returned empty quote; using simulated");
     }
-
-    const inUsd = Number(q.amountInUsd ?? proposal.amountUsd);
-    const outUsd = Number(q.amountOutUsd ?? 0);
-    const feeUsd = Number.isFinite(inUsd) && Number.isFinite(outUsd)
-      ? Math.max(0, inUsd - outUsd)
-      : proposal.estimatedFeeUsd;
-    const feeBps = inUsd > 0 ? Math.round((feeUsd / inUsd) * 10_000) : 0;
-    const appFeeBps = data.quoteRequest?.appFees?.[0]?.fee;
-
+    const { feeUsd, feeBps } = feeFromQuote(proposal, q);
     return {
       dry: true,
       ok: true,
@@ -171,10 +173,10 @@ export async function requestDryQuote(proposal: TradeProposal): Promise<QuoteRes
       timeEstimateSec: q.timeEstimate,
       correlationId: data.correlationId,
       deadline: data.quoteRequest?.deadline || deadline,
-      feeUsd: Number(feeUsd.toFixed(6)),
+      feeUsd,
       feeBps,
       slippageBps: data.quoteRequest?.slippageTolerance ?? proposal.slippageBps,
-      appFeeBps,
+      appFeeBps: data.quoteRequest?.appFees?.[0]?.fee,
       executionEnabled: isExecutionEnabled(),
     };
   } catch (err) {
@@ -183,5 +185,184 @@ export async function requestDryQuote(proposal: TradeProposal): Promise<QuoteRes
       err instanceof Error ? err.message : "error",
     );
     return simulatedQuote(proposal, "1Click request failed; using simulated");
+  }
+}
+
+export type ExecutableQuoteInput = {
+  proposal: TradeProposal;
+  /** User NEAR account — refund + recipient (user keeps custody) */
+  accountId: string;
+};
+
+/**
+ * Non-dry 1Click quote → depositAddress. Fail-closed on caps + dual flags.
+ * Server never signs; caller must have user sign the deposit in their wallet.
+ */
+export async function requestExecutableQuote(
+  input: ExecutableQuoteInput,
+): Promise<QuoteResult> {
+  const { proposal, accountId } = input;
+
+  if (!isExecutionEnabled()) {
+    return {
+      dry: false,
+      ok: false,
+      simulated: false,
+      message:
+        "Execution disabled. Set NEAR_NETWORK=mainnet and ALLOW_MAINNET=true locally (never on shared demo).",
+      executionEnabled: false,
+    };
+  }
+
+  if (proposal.amountUsd > HARD_CAPS.maxMainnetSwapUsd + 1e-9) {
+    return {
+      dry: false,
+      ok: false,
+      simulated: false,
+      message: `Mainnet swap hard-capped at $${HARD_CAPS.maxMainnetSwapUsd} (got $${proposal.amountUsd})`,
+      executionEnabled: true,
+    };
+  }
+
+  if (!/^[a-z0-9._-]+$/.test(accountId) || accountId.length > 64) {
+    return {
+      dry: false,
+      ok: false,
+      simulated: false,
+      message: "Invalid NEAR accountId",
+      executionEnabled: true,
+    };
+  }
+
+  const from = getTokenBySymbol(proposal.fromSymbol);
+  const to = getTokenBySymbol(proposal.toSymbol);
+  if (!from || !to || !from.nearContractId) {
+    return {
+      dry: false,
+      ok: false,
+      simulated: false,
+      message: "Token pair not supported for ORIGIN_CHAIN deposit",
+      executionEnabled: true,
+    };
+  }
+
+  const amount = amountForProposal(proposal);
+  const deadline = new Date(Date.now() + 30 * 60_000).toISOString();
+
+  const body = {
+    dry: false as const,
+    swapType: "EXACT_INPUT" as const,
+    slippageTolerance: proposal.slippageBps,
+    originAsset: from.intentsAssetId,
+    depositType: "ORIGIN_CHAIN" as const,
+    destinationAsset: to.intentsAssetId,
+    amount,
+    refundTo: accountId,
+    refundType: "ORIGIN_CHAIN" as const,
+    recipient: accountId,
+    recipientType: "INTENTS" as const,
+    deadline,
+    referral: "intentrail",
+  };
+
+  try {
+    const res = await fetch(`${ONECLICK_BASE}/v0/quote`, {
+      method: "POST",
+      headers: oneClickHeaders(),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      console.error("[intentrail] 1Click executable quote status", res.status);
+      return {
+        dry: false,
+        ok: false,
+        simulated: false,
+        message: `1Click executable quote failed (${res.status})`,
+        executionEnabled: true,
+      };
+    }
+    const data = (await res.json()) as OneClickQuoteResponse;
+    const q = data.quote;
+    if (!q?.amountOut || !q.depositAddress) {
+      return {
+        dry: false,
+        ok: false,
+        simulated: false,
+        message: "1Click did not return a deposit address",
+        executionEnabled: true,
+      };
+    }
+    const { feeUsd, feeBps } = feeFromQuote(proposal, q);
+    return {
+      dry: false,
+      ok: true,
+      simulated: false,
+      stub: false,
+      message:
+        "Executable 1Click quote — sign deposit in your wallet (server never holds keys)",
+      amountIn: q.amountIn ?? amount,
+      amountInFormatted: q.amountInFormatted,
+      amountOut: q.amountOut,
+      amountOutFormatted: q.amountOutFormatted,
+      amountInUsd: q.amountInUsd,
+      amountOutUsd: q.amountOutUsd,
+      minAmountOut: q.minAmountOut,
+      timeEstimateSec: q.timeEstimate,
+      correlationId: data.correlationId,
+      deadline: q.deadline || data.quoteRequest?.deadline || deadline,
+      feeUsd,
+      feeBps,
+      slippageBps: data.quoteRequest?.slippageTolerance ?? proposal.slippageBps,
+      appFeeBps: data.quoteRequest?.appFees?.[0]?.fee,
+      executionEnabled: true,
+      depositAddress: q.depositAddress,
+      depositMemo: q.depositMemo,
+      depositContractId: from.nearContractId,
+      depositMethod: "ft_transfer",
+    };
+  } catch (err) {
+    console.error(
+      "[intentrail] executable quote error:",
+      err instanceof Error ? err.message : "error",
+    );
+    return {
+      dry: false,
+      ok: false,
+      simulated: false,
+      message: "1Click executable quote request failed",
+      executionEnabled: true,
+    };
+  }
+}
+
+export async function getSwapStatus(depositAddress: string): Promise<{
+  ok: boolean;
+  status?: string;
+  updatedAt?: string;
+  message: string;
+}> {
+  if (!depositAddress || depositAddress.length > 128) {
+    return { ok: false, message: "Invalid depositAddress" };
+  }
+  try {
+    const url = new URL(`${ONECLICK_BASE}/v0/status`);
+    url.searchParams.set("depositAddress", depositAddress);
+    const res = await fetch(url.toString(), {
+      headers: oneClickHeaders(),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      return { ok: false, message: `Status unavailable (${res.status})` };
+    }
+    const data = (await res.json()) as { status?: string; updatedAt?: string };
+    return {
+      ok: true,
+      status: data.status,
+      updatedAt: data.updatedAt,
+      message: data.status || "unknown",
+    };
+  } catch {
+    return { ok: false, message: "Status request failed" };
   }
 }

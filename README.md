@@ -1,29 +1,72 @@
 # IntentRail
 
-**AI trading agent with hard guardrails on NEAR Intents.**
+**The seatbelt for AI agents that touch money.**
+
+Primary audience: **agent builders**. The trader/farmer UI is the proof that the seatbelt works on a real NEAR Intents path.
 
 Built for [NEAR HACKATHON](https://nearhackathon.com).
 
-## Tracks covered
+## Tracks
 
-| Track id | Track | How IntentRail fits |
-| --- | --- | --- |
-| `defi` | Unstoppable DeFi | Fee-aware agent + **NEAR Intents / 1Click** dry quotes |
-| `security` | AI Security & Defense | Fail-closed guardrails, kill switch, trade-only **function-call keys** |
-| `agents` | Agent Economy | Agent pays a **guardrailed micro-fee** for a premium signal |
-| `swarms` | AI Swarms | **Trend + Risk** agents vote; both must agree before PASS |
+| Track | Fit |
+| --- | --- |
+| `security` | Fail-closed guardrail engine + kill switch + trade-only FC keys |
+| `defi` | NEAR Intents / 1Click dry quotes + opt-in ≤$1 executable path |
+| `agents` | Guardrailed agent spending (simulated micro-budget) |
+| `swarms` | Multi-agent consensus (Trend + Risk) feeding the guardrail |
 
-## What
+## Seatbelt API (builders)
 
-IntentRail proposes fee-aware swaps, runs a two-agent swarm vote, optionally buys a simulated premium signal (capped), fetches a **dry** NEAR Intents 1Click quote (live when possible, else clearly **simulated**), then applies fail-closed guardrails. Human approval is required before any execute. The app never holds private keys.
+```js
+const res = await fetch("https://intentrail-neon.vercel.app/api/guard/check", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    fromSymbol: "USDC", toSymbol: "NEAR", amountUsd: 5,
+    slippageBps: 50, stopLossPct: 2, feeAwareOk: true,
+    votes: [
+      { agent: "trend", vote: "yes", reason: "up" },
+      { agent: "risk", vote: "yes", reason: "sized" },
+    ],
+  }),
+});
+const { decision, reason, checks } = await res.json(); // PASS | BLOCK
+```
 
-## Why NEAR
+Engine module: `src/lib/guardrails.ts` (`evaluateProposal` / `checkProposal`).
 
-- **NEAR Intents / 1Click** — cross-chain quotes with `dry: true` (no deposit address)
-- **Function-call access keys** — trade-only scope (`intents.near` methods on mainnet)
-- **Wallet Selector / MyNearWallet** — user signs; server never sees a seed
+## What the proof UI shows
 
-## How to run
+1. Live prices + agent feed with **multi-agent consensus** votes  
+2. Fee-aware proposal → fail-closed PASS/BLOCK (incl. `CONSENSUS`, caps, fees)  
+3. **Show blocked bad trade** — oversize / not-allowlisted / high slippage  
+4. Honest **backtest** (CoinGecko history) — labeled *not a guarantee*  
+5. Optional **real $1 swap** path (local mainnet flags only): non-dry quote → deposit → wallet sign → status poll  
+
+## Real vs simulated
+
+| Piece | Status |
+| --- | --- |
+| Guardrail engine / `/api/guard/check` | Real |
+| CoinGecko prices + backtest series | Real when API allows; else unavailable (no fake PnL) |
+| 1Click dry quotes | Live when API succeeds; else labeled simulated |
+| Executable 1Click + deposit status | Real code path; **gated** by dual mainnet flags |
+| Agent spend (premium signal) | **Simulated** budget with caps |
+| Consensus agents | Deterministic rules (optional NEAR AI enrich) |
+
+## Run a real ≤$1 swap yourself
+
+IntentRail **will not** flip mainnet flags on Vercel and **will not** sign for you.
+
+1. Clone, `npm i`, copy `.env.example` → `.env.local`  
+2. Set `NEAR_NETWORK=mainnet` **and** `ALLOW_MAINNET=true` **locally only**  
+3. `npm run dev` → connect MyNearWallet (needs ability to `ft_transfer` USDC)  
+4. Propose USDC→NEAR with **amount $1** → Approve → **Prepare executable quote** → confirm cap → **Sign deposit**  
+5. Watch status poll (`SUCCESS` / `REFUNDED` / `FAILED`)
+
+Hard cap: **$1 per mainnet swap** (server + client). Human click required at every step.
+
+## How to run (demo)
 
 ```bash
 npm install
@@ -31,54 +74,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open http://localhost:3000 or **/demo** (no wallet).
-
-```bash
-npm run build && npm start
-```
-
-### Environment (high level)
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `NEAR_NETWORK` | `testnet` | Mainnet ignored unless `ALLOW_MAINNET=true` |
-| `ALLOW_MAINNET` | `false` | Dual flag for execution |
-| `ALLOW_DRY_QUOTES` | `true` | Live 1Click dry API (read-only) |
-| `NEAR_AI_ENABLED` | `false` | Optional NEAR AI Cloud enrichment (needs `NEAR_AI_API_KEY`) |
-| `REQUIRE_HUMAN_APPROVAL` | `true` | Keep on |
-
-Never put private keys or seed phrases in env files that get committed.
-
-## Tech used (NEAR)
-
-- NEAR Wallet Selector + MyNearWallet
-- `near-api-js` available; signing stays in wallet
-- NEAR Intents **1Click Swap API** (`dry: true`)
-- Trade-only FC key scope → `intents.near` / `execute_intents` + `simulate_intents` (mainnet)
-- Optional NEAR AI Cloud (env-flagged roadmap hook)
-- CoinGecko public prices
-- Next.js 15 on Vercel
-
-HACKATHON.md Q-007: **no Intents testnet**. Dry quotes use the public mainnet 1Click API; execution stays off unless the dual mainnet flag is set.
-
-## Do X → see Y (judges)
-
-1. Open `/` → see **Live** prices (NEAR/USDC/BTC/ETH), guardrail status, agent feed.
-2. Click **Propose trade** (USDC→NEAR, $5) → see **Swarm votes** (trend + risk), signal fee line, dry quote panel labeled **live 1Click** or **simulated**, and PASS/BLOCK checklist including `SWARM_AGREE`, `FEE_AWARE`, `QUOTE_DRY`.
-3. Toggle **Kill switch** on → Propose again → **BLOCK** / `KILL_SWITCH`.
-4. Connect wallet → modal requests a **trade-only function-call key** (contract + methods shown). Revoke steps are on the page.
-5. Open `/demo` → same flow without a wallet.
-6. Open `/security` → threat model.
-
-## Real vs simulated
-
-| Piece | Status |
-| --- | --- |
-| CoinGecko prices | Live (demo fallback) |
-| 1Click dry quote | Live when API succeeds; else **simulated** label |
-| Swarm votes | Deterministic agents (optional NEAR AI enrich if flagged) |
-| Signal micro-payment | **Simulated** (capped; same fail-closed ledger) |
-| Execution / deposits | **Disabled** unless mainnet dual flag |
+Open `/` or `/demo`. `npm run build && npm start` for production locally.
 
 ## License
 

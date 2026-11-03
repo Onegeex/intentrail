@@ -3,9 +3,9 @@ import { getSignalSpentToday, getState, recordSignalSpend } from "./store";
 import type { SignalPayment } from "./types";
 
 /**
- * Agent Economy — agent "pays" a tiny fee for a premium signal.
- * Simulated micro-payment; per-call + daily caps checked fail-closed.
- * Never moves real chain funds or touches private keys.
+ * Guardrailed agent spending — simulated micro-budget for a premium signal.
+ * Same fail-closed ledger as trades (per-call + daily caps, kill switch).
+ * Never moves chain funds or touches private keys. Always labeled simulated.
  */
 export async function buyPremiumSignal(): Promise<SignalPayment> {
   const amountUsd = HARD_CAPS.signalFeeUsd;
@@ -14,7 +14,7 @@ export async function buyPremiumSignal(): Promise<SignalPayment> {
       ok: false,
       simulated: true,
       amountUsd,
-      reason: `Signal fee exceeds per-call cap $${HARD_CAPS.maxSignalFeePerCallUsd}`,
+      reason: `Agent spend exceeds per-call cap $${HARD_CAPS.maxSignalFeePerCallUsd}`,
     };
   }
 
@@ -24,7 +24,7 @@ export async function buyPremiumSignal(): Promise<SignalPayment> {
       ok: false,
       simulated: true,
       amountUsd,
-      reason: "Kill switch / untrusted state — signal purchase blocked",
+      reason: "Kill switch / untrusted — agent spend blocked",
     };
   }
 
@@ -34,7 +34,7 @@ export async function buyPremiumSignal(): Promise<SignalPayment> {
       ok: false,
       simulated: true,
       amountUsd,
-      reason: `Daily signal cap $${HARD_CAPS.dailySignalSpendCapUsd} would be exceeded (used $${spent.toFixed(2)})`,
+      reason: `Daily agent-spend cap $${HARD_CAPS.dailySignalSpendCapUsd} would be exceeded (used $${spent.toFixed(2)})`,
     };
   }
 
@@ -44,8 +44,8 @@ export async function buyPremiumSignal(): Promise<SignalPayment> {
     ok: true,
     simulated: true,
     amountUsd,
-    reason: `Paid $${amountUsd.toFixed(2)} simulated signal fee (agent-economy)`,
+    reason: `Simulated agent spend $${amountUsd.toFixed(2)} (guardrailed budget)`,
     premiumHint:
-      "Premium: prefer maker-style sizing; 1Click unauthenticated fee ~20 bps.",
+      "Premium hint: prefer maker-style sizing; 1Click unauthenticated fee ~20 bps.",
   };
 }

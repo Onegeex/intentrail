@@ -71,3 +71,16 @@ If you find a vulnerability in IntentRail, do not open a public issue with explo
 
 - Trend + Risk votes must both be `yes` (`SWARM_AGREE`) or the proposal is BLOCKed.
 - Premium signal fees are simulated micro-payments with per-call and daily caps; kill switch blocks purchases.
+
+
+## Mainnet $1 execution (opt-in, local only)
+
+- Requires `NEAR_NETWORK=mainnet` **and** `ALLOW_MAINNET=true`.
+- Public / Vercel demo must keep both off. IntentRail maintainers do not enable them on shared deploys.
+- Per-swap hard cap: **$1** (`HARD_CAPS.maxMainnetSwapUsd`), enforced in `requestExecutableQuote`, `/api/execute/prepare`, and the client before `Sign deposit`.
+- Flow: human approve → prepare non-dry 1Click quote → user signs `ft_transfer` to `depositAddress` in their wallet → poll `/api/execute/status`.
+- Server never holds keys, never auto-signs, never submits deposits.
+
+## Seatbelt API
+
+`POST /api/guard/check` exposes the same fail-closed engine (`src/lib/guardrails.ts`) for other agents.

@@ -1,10 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { ExecutePanel } from "./ExecutePanel";
 import { ProposalCard } from "./ProposalCard";
+import type { NearNetwork } from "@/lib/near-wallet";
 import type { GuardResult, QuoteResult, TradeProposal } from "@/lib/types";
 
-export function AgentPanel({ demo = false }: { demo?: boolean }) {
+export function AgentPanel({
+  demo = false,
+  network = "testnet",
+}: {
+  demo?: boolean;
+  network?: NearNetwork;
+}) {
   const [fromSymbol, setFromSymbol] = useState("USDC");
   const [toSymbol, setToSymbol] = useState("NEAR");
   const [amountUsd, setAmountUsd] = useState(5);
@@ -14,12 +22,14 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [, setApproved] = useState(false);
+  const [blockedDemo, setBlockedDemo] = useState(false);
 
   async function propose() {
     setBusy(true);
     setMsg(null);
     setQuote(null);
     setApproved(false);
+    setBlockedDemo(false);
     try {
       const res = await fetch("/api/propose", {
         method: "POST",
@@ -43,8 +53,72 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
     }
   }
 
+  /** Video-friendly: clearly BLOCKed bad trade via seatbelt API */
+  async function showBlockedBadTrade() {
+    setBusy(true);
+    setMsg(null);
+    setQuote(null);
+    setApproved(false);
+    setBlockedDemo(true);
+    try {
+      const res = await fetch("/api/guard/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromSymbol: "USDC",
+          toSymbol: "DOGE",
+          amountUsd: 500,
+          slippageBps: 500,
+          stopLossPct: 2,
+          feeAwareOk: false,
+          rationale: "Deliberate bad trade for seatbelt demo",
+          votes: [
+            { agent: "trend", vote: "no", reason: "No trend support for meme size" },
+            { agent: "risk", vote: "no", reason: "Oversize + fee-unaware" },
+          ],
+        }),
+      });
+      const data = await res.json();
+      const fakeProposal: TradeProposal = {
+        id: data.proposalId || "blocked-demo",
+        createdAt: new Date().toISOString(),
+        side: "buy",
+        fromSymbol: "USDC",
+        toSymbol: "DOGE",
+        amountUsd: 500,
+        amountIn: "500000000",
+        estimatedOut: "0",
+        estimatedFeeUsd: 1,
+        slippageBps: 500,
+        stopLossPct: 2,
+        trend: "flat",
+        rationale: "Deliberate bad trade — oversize, not allowlisted, high slippage.",
+        feeAwareOk: false,
+        network,
+        demo: true,
+        votes: [
+          { agent: "trend", vote: "no", reason: "No trend support for meme size" },
+          { agent: "risk", vote: "no", reason: "Oversize + fee-unaware" },
+        ],
+        swarmAgreed: false,
+      };
+      setProposal(fakeProposal);
+      setGuard({
+        decision: data.decision || "BLOCK",
+        reason: data.reason || "blocked",
+        checks: data.checks || [],
+        proposalId: fakeProposal.id,
+      });
+      setMsg("Seatbelt BLOCKed a bad trade (allowlist + size + slippage + consensus).");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function approve() {
-    if (!proposal) return;
+    if (!proposal || blockedDemo) return;
     setBusy(true);
     setMsg(null);
     try {
@@ -60,7 +134,7 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
         return;
       }
       setApproved(true);
-      setMsg("Human approval recorded. You can now request a dry-quote.");
+      setMsg("Human approval recorded. Dry-quote anytime; real execute needs mainnet flags + $1 cap.");
       if (data.guard) setGuard(data.guard);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "error");
@@ -70,7 +144,7 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
   }
 
   async function dryQuote() {
-    if (!proposal) return;
+    if (!proposal || blockedDemo) return;
     setBusy(true);
     setMsg(null);
     try {
@@ -97,7 +171,11 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
   return (
     <section className="space-y-4">
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 space-y-4">
-        <h2 className="text-base font-semibold text-white">Agent proposal</h2>
+        <h2 className="text-base font-semibold text-white">Proof agent (trader / farmer)</h2>
+        <p className="text-xs text-zinc-500">
+          Shows the seatbelt on a fee-aware proposal. Builders: use{" "}
+          <code className="text-zinc-400">/api/guard/check</code> directly.
+        </p>
         <div className="grid sm:grid-cols-3 gap-3">
           <label className="text-sm text-zinc-400">
             From
@@ -140,14 +218,24 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
             />
           </label>
         </div>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={propose}
-          className="rounded-lg bg-white text-black hover:bg-zinc-200 disabled:opacity-50 px-4 py-2 text-sm font-semibold"
-        >
-          {busy ? "Working…" : "Propose trade"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void propose()}
+            className="rounded-lg bg-white text-black hover:bg-zinc-200 disabled:opacity-50 px-4 py-2 text-sm font-semibold"
+          >
+            {busy ? "Working…" : "Propose trade"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void showBlockedBadTrade()}
+            className="rounded-lg border border-red-800 text-red-200 hover:bg-red-950/40 disabled:opacity-50 px-4 py-2 text-sm font-semibold"
+          >
+            Show blocked bad trade
+          </button>
+        </div>
         {msg && <p className="text-sm text-amber-200">{msg}</p>}
       </div>
 
@@ -160,6 +248,10 @@ export function AgentPanel({ demo = false }: { demo?: boolean }) {
           onQuote={dryQuote}
           busy={busy}
         />
+      )}
+
+      {!demo && !blockedDemo && (
+        <ExecutePanel proposal={proposal} network={network} demo={demo} />
       )}
     </section>
   );

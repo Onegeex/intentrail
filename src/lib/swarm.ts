@@ -1,8 +1,8 @@
 import type { AgentVote, PriceSnapshot, TradeSide } from "./types";
 
 /**
- * AI Swarms — two agents vote independently. Proposal needs both "yes".
- * Deterministic rules (no paid API). Optional NEAR AI can enrich reasons later.
+ * Multi-agent consensus feeding the guardrail (Trend + Risk).
+ * Both must vote yes before CONSENSUS check can PASS.
  */
 export function trendAgentVote(input: {
   side: TradeSide;
@@ -21,28 +21,27 @@ export function trendAgentVote(input: {
       return {
         agent: "trend",
         vote: "no",
-        reason: `Downtrend (${ch.toFixed(2)}% 24h) — trend agent rejects buy.`,
+        reason: `Downtrend (${ch.toFixed(2)}% 24h) — trend rejects buy.`,
       };
     }
     return {
       agent: "trend",
       vote: "yes",
-      reason: `Flat (${ch.toFixed(2)}% 24h) — small probe allowed by trend agent.`,
+      reason: `Flat (${ch.toFixed(2)}% 24h) — small probe allowed.`,
     };
   }
-  // sell
   if (ch < -1.5) {
     return {
       agent: "trend",
       vote: "yes",
-      reason: `Downtrend (${ch.toFixed(2)}%) — rotate/sell aligned with trend.`,
+      reason: `Downtrend (${ch.toFixed(2)}%) — rotate/sell aligned.`,
     };
   }
   if (ch > 1.5) {
     return {
       agent: "trend",
       vote: "no",
-      reason: `Uptrend (+${ch.toFixed(2)}%) — trend agent rejects sell into strength.`,
+      reason: `Uptrend (+${ch.toFixed(2)}%) — rejects sell into strength.`,
     };
   }
   return {
@@ -52,11 +51,24 @@ export function trendAgentVote(input: {
   };
 }
 
+/** Approx realized vol proxy from |24h change| (honest, not GARCH). */
+export function estimateVolatilityPct(change24hPct: number): number {
+  return Math.min(80, Math.abs(change24hPct) * 1.2);
+}
+
+/** Soft drawdown proxy: adverse move vs stop. */
+export function estimateDrawdownPct(change24hPct: number, stopLossPct: number): number {
+  const adverse = change24hPct < 0 ? Math.abs(change24hPct) : 0;
+  return Math.max(adverse, stopLossPct * 0.5);
+}
+
 export function riskAgentVote(input: {
   amountUsd: number;
   stopLossPct: number;
   maxLossPerTradeUsd: number;
   feeAwareOk: boolean;
+  volatilityPct: number;
+  drawdownPct: number;
 }): AgentVote {
   const risk = input.amountUsd * (input.stopLossPct / 100);
   if (risk > input.maxLossPerTradeUsd + 1e-9) {
@@ -73,17 +85,33 @@ export function riskAgentVote(input: {
       reason: "Fee-aware filter failed — edge does not cover assumed fees.",
     };
   }
+  if (input.volatilityPct > 25) {
+    return {
+      agent: "risk",
+      vote: "no",
+      reason: `Volatility ~${input.volatilityPct.toFixed(1)}% too high for size $${input.amountUsd}.`,
+    };
+  }
+  if (input.drawdownPct > input.stopLossPct * 1.5) {
+    return {
+      agent: "risk",
+      vote: "no",
+      reason: `Drawdown proxy ${input.drawdownPct.toFixed(1)}% vs stop ${input.stopLossPct}%.`,
+    };
+  }
   if (input.amountUsd > 25) {
     return {
       agent: "risk",
       vote: "no",
-      reason: `Size $${input.amountUsd} above risk agent's soft cap ($25).`,
+      reason: `Position $${input.amountUsd} above risk soft cap ($25).`,
     };
   }
   return {
     agent: "risk",
     vote: "yes",
-    reason: `Risk $${risk.toFixed(2)} within $${input.maxLossPerTradeUsd}; fees OK.`,
+    reason:
+      `Risk $${risk.toFixed(2)} within $${input.maxLossPerTradeUsd}; ` +
+      `vol ~${input.volatilityPct.toFixed(1)}%; dd ~${input.drawdownPct.toFixed(1)}%; size $${input.amountUsd}.`,
   };
 }
 

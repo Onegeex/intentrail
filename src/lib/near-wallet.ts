@@ -57,3 +57,52 @@ export function resetWalletCache() {
   modal = null;
   cachedNetwork = null;
 }
+
+/** Sign NEP-141 ft_transfer to 1Click deposit address. Wallet-only; no keys on server. */
+export async function signFtDeposit(opts: {
+  network: NearNetwork;
+  tokenContractId: string;
+  depositAddress: string;
+  amount: string;
+  memo?: string;
+}): Promise<{ txHash?: string; error?: string }> {
+  const selector = await getSelector(opts.network);
+  const wallet = await selector.wallet();
+  try {
+    // Wallet Selector accepts InternalAction-shaped objects at runtime;
+    // v10 types Alias Action to @near-js/transactions classes.
+    const actions = [
+      {
+        type: "FunctionCall" as const,
+        params: {
+          methodName: "ft_transfer",
+          args: {
+            receiver_id: opts.depositAddress,
+            amount: opts.amount,
+            ...(opts.memo ? { memo: opts.memo } : {}),
+          },
+          gas: "30000000000000",
+          deposit: "1",
+        },
+      },
+    ];
+    const result = await wallet.signAndSendTransaction({
+      receiverId: opts.tokenContractId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      actions: actions as any,
+    });
+    const txHash =
+      result && typeof result === "object" && "transaction" in result
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          String((result as any).transaction?.hash || "")
+        : undefined;
+    return { txHash: txHash || "submitted" };
+  } catch (e) {
+    return {
+      error:
+        e instanceof Error
+          ? e.message
+          : "Deposit signature failed (need FA or token FC key for ft_transfer)",
+    };
+  }
+}

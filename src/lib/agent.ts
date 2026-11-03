@@ -1,7 +1,13 @@
 import { randomUUID } from "crypto";
 import { resolveNetwork, HARD_CAPS, getDefaultPolicy } from "./config";
 import { getTokenBySymbol } from "./tokens";
-import { riskAgentVote, swarmAgree, trendAgentVote } from "./swarm";
+import {
+  estimateDrawdownPct,
+  estimateVolatilityPct,
+  riskAgentVote,
+  swarmAgree,
+  trendAgentVote,
+} from "./swarm";
 import type { PriceSnapshot, TradeProposal, TradeSide } from "./types";
 
 const FEE_BPS_ASSUMED = 20; // ~0.2% without 1Click JWT (HACKATHON Q-006)
@@ -87,6 +93,8 @@ export function buildProposal(input: {
     !(trend === "flat" && amountUsd > 10);
 
   const policy = getDefaultPolicy();
+  const volatilityPct = estimateVolatilityPct(input.toPrice.change24hPct);
+  const drawdownPct = estimateDrawdownPct(input.toPrice.change24hPct, stopLossPct);
   const votes = [
     trendAgentVote({ side, toPrice: input.toPrice }),
     riskAgentVote({
@@ -94,11 +102,13 @@ export function buildProposal(input: {
       stopLossPct,
       maxLossPerTradeUsd: policy.maxLossPerTradeUsd,
       feeAwareOk: feeOkFinal,
+      volatilityPct,
+      drawdownPct,
     }),
   ];
   const agreed = swarmAgree(votes);
   if (!agreed) {
-    rationale = `${rationale} Swarm did not agree.`;
+    rationale = `${rationale} Multi-agent consensus did not agree.`;
   }
 
   return {
@@ -120,5 +130,10 @@ export function buildProposal(input: {
     demo: Boolean(input.demo),
     votes,
     swarmAgreed: agreed,
+    riskInputs: {
+      volatilityPct: Number(volatilityPct.toFixed(2)),
+      drawdownPct: Number(drawdownPct.toFixed(2)),
+      positionUsd: amountUsd,
+    },
   };
 }

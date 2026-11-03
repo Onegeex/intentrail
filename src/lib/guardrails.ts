@@ -1,19 +1,26 @@
-import { HARD_CAPS } from "./config";
+import { HARD_CAPS, isExecutionEnabled } from "./config";
 import { getPolicy, getSpentToday } from "./store";
 import { isAllowlistedSymbol } from "./tokens";
 import type { GuardCheck, GuardResult, QuoteResult, TradeProposal } from "./types";
 
+export type EvaluateOptions = {
+  /** When true, expect/allow non-dry executable quote checks */
+  forExecution?: boolean;
+};
+
 /**
- * Server-side guardrail engine. Fail closed: any failed check => BLOCK.
- * Optional real dry-quote tightens FEE_AWARE / SLIPPAGE using live numbers.
+ * Fail-closed guardrail engine — reusable by IntentRail and external agents.
+ * Any failed check => BLOCK.
  */
 export async function evaluateProposal(
   proposal: TradeProposal,
   quote?: QuoteResult | null,
+  opts?: EvaluateOptions,
 ): Promise<GuardResult> {
   const policy = await getPolicy();
   const spent = await getSpentToday();
   const checks: GuardCheck[] = [];
+  const forExecution = Boolean(opts?.forExecution);
 
   const push = (code: string, ok: boolean, detail: string) => {
     checks.push({ code, ok, detail });
@@ -49,6 +56,25 @@ export async function evaluateProposal(
       : "Amount outside hard caps",
   );
 
+  // Real mainnet execution hard cap ($1)
+  if (forExecution || (quote && quote.dry === false)) {
+    const execCapOk = proposal.amountUsd <= HARD_CAPS.maxMainnetSwapUsd + 1e-9;
+    push(
+      "MAINNET_SWAP_CAP",
+      execCapOk,
+      execCapOk
+        ? `Within mainnet per-swap cap $${HARD_CAPS.maxMainnetSwapUsd}`
+        : `Blocked: mainnet per-swap cap is $${HARD_CAPS.maxMainnetSwapUsd}`,
+    );
+    push(
+      "EXECUTION_FLAGS",
+      isExecutionEnabled(),
+      isExecutionEnabled()
+        ? "NEAR_NETWORK=mainnet + ALLOW_MAINNET=true"
+        : "Execution flags off (testnet default)",
+    );
+  }
+
   const riskUsd = proposal.amountUsd * (proposal.stopLossPct / 100);
   const lossOk = riskUsd <= policy.maxLossPerTradeUsd + 1e-9;
   push(
@@ -69,12 +95,9 @@ export async function evaluateProposal(
   push(
     "SLIPPAGE",
     slipOk,
-    quote && !quote.simulated
-      ? `Quote slippage ${slipBps} bps vs max ${policy.maxSlippageBps} bps (live dry quote)`
-      : `${slipBps} bps vs max ${policy.maxSlippageBps} bps`,
+    `${slipBps} bps vs max ${policy.maxSlippageBps} bps`,
   );
 
-  // Fee-aware: prefer real quote fee bps when available
   let feeOk = proposal.feeAwareOk;
   let feeDetail = proposal.feeAwareOk
     ? "Estimated edge covers fees"
@@ -88,33 +111,43 @@ export async function evaluateProposal(
   push("FEE_AWARE", feeOk, feeDetail);
 
   if (quote) {
-    push(
-      "QUOTE_DRY",
-      quote.dry === true && quote.ok,
-      quote.simulated
-        ? "Simulated dry quote (fallback)"
-        : "Live 1Click dry quote (no deposit address)",
-    );
+    if (forExecution || quote.dry === false) {
+      push(
+        "QUOTE_EXECUTABLE",
+        quote.ok && quote.dry === false && Boolean(quote.depositAddress),
+        quote.ok && quote.depositAddress
+          ? "Non-dry 1Click quote with deposit address"
+          : quote.message || "Executable quote missing deposit address",
+      );
+    } else {
+      push(
+        "QUOTE_DRY",
+        quote.dry === true && quote.ok,
+        quote.simulated
+          ? "Simulated dry quote (fallback)"
+          : "Live 1Click dry quote (no deposit address)",
+      );
+    }
     push(
       "EXECUTION_GATE",
       true,
       quote.executionEnabled
-        ? "Mainnet execution flags ON — still requires human approval + wallet sign"
+        ? "Mainnet execution flags ON — still requires explicit user click + wallet sign"
         : "Execution disabled (testnet default / dual flag off) — quote is read-only",
     );
   }
 
-  // Swarm: both Trend + Risk must vote yes
+  // Multi-agent consensus → guardrail input
   const votes = proposal.votes || [];
   const swarmOk =
     proposal.swarmAgreed === true ||
     (votes.length >= 2 && votes.every((v) => v.vote === "yes"));
   push(
-    "SWARM_AGREE",
+    "CONSENSUS",
     swarmOk,
     swarmOk
-      ? "Trend + Risk agents both voted yes"
-      : `Swarm rejected: ${votes.map((v) => `${v.agent}=${v.vote}`).join(", ") || "no votes"}`,
+      ? "Multi-agent consensus (Trend + Risk) agreed"
+      : `Consensus rejected: ${votes.map((v) => `${v.agent}=${v.vote}`).join(", ") || "no votes"}`,
   );
 
   push(
@@ -148,3 +181,6 @@ export async function evaluateProposal(
     proposalId: proposal.id,
   };
 }
+
+/** Alias for external agents — same fail-closed engine. */
+export const checkProposal = evaluateProposal;

@@ -74,7 +74,7 @@ export function ProposalCard({
           {proposal.votes && proposal.votes.length > 0 && (
             <>
               <p className="text-xs text-zinc-400">
-                Swarm votes{" "}
+                Multi-agent consensus{" "}
                 <span className={proposal.swarmAgreed ? "text-emerald-400" : "text-amber-300"}>
                   {proposal.swarmAgreed ? "AGREE" : "NO CONSENSUS"}
                 </span>
@@ -93,14 +93,20 @@ export function ProposalCard({
               </ul>
             </>
           )}
+          {proposal.riskInputs && (
+            <p className="text-xs text-zinc-500 font-mono">
+              risk inputs: vol {proposal.riskInputs.volatilityPct}% · dd{" "}
+              {proposal.riskInputs.drawdownPct}% · size ${proposal.riskInputs.positionUsd}
+            </p>
+          )}
           {proposal.signalPayment && (
             <p className="text-xs text-zinc-400">
-              Signal fee:{" "}
+              Agent spend:{" "}
               <span className={proposal.signalPayment.ok ? "text-emerald-300" : "text-amber-300"}>
                 {proposal.signalPayment.ok ? "paid" : "blocked"}
               </span>{" "}
               ${proposal.signalPayment.amountUsd.toFixed(2)}
-              {proposal.signalPayment.simulated ? " (simulated)" : ""} —{" "}
+              {proposal.signalPayment.simulated ? " (simulated budget)" : ""} —{" "}
               {proposal.signalPayment.reason}
             </p>
           )}

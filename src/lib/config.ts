@@ -59,6 +59,8 @@ export const HARD_CAPS = {
   maxSlippageBps: 200,
   maxTradeUsd: 50,
   minTradeUsd: 1,
+  /** Hard cap for real mainnet execution (server + client). */
+  maxMainnetSwapUsd: 1,
   maxFeeBps: 50,
   /** Agent Economy: premium signal micro-payment */
   signalFeeUsd: 0.05,
