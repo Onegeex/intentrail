@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Providers } from "@/components/Providers";
+import { SiteNav } from "@/components/SiteNav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "IntentRail — AI trading with hard guardrails on NEAR Intents",
+  title: "IntentRail — seatbelt for AI agents that touch money",
   description:
-    "Fee-aware AI trade proposals, server-side guardrails, human approval, and NEAR Intents dry-quotes. Built for NEAR HACKATHON.",
+    "Fail-closed guardrails for agent trades on NEAR Intents. Try the seatbelt API, demo without a wallet, or run a ≤$1 Live swap.",
 };
 
 export default function RootLayout({
@@ -26,8 +27,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <Providers>{children}</Providers>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased overflow-x-hidden`}>
+        <Providers>
+          <SiteNav />
+          {children}
+        </Providers>
       </body>
     </html>
   );

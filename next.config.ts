@@ -15,6 +15,16 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // Public seatbelt API — browser agents from other origins
+        source: "/api/guard/:path*",
+        headers: [
+          { key: "Access-Control-Allow-Origin", value: "*" },
+          { key: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS" },
+          { key: "Access-Control-Allow-Headers", value: "Content-Type, Accept, Authorization" },
+          { key: "Access-Control-Max-Age", value: "86400" },
+        ],
+      },
+      {
         source: "/(.*)",
         headers: [
           { key: "X-Frame-Options", value: "DENY" },

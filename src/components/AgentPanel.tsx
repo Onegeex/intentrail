@@ -1,5 +1,6 @@
 "use client";
 
+import { useToast } from "@/components/Toast";
 import { useState } from "react";
 import { ExecutePanel } from "./ExecutePanel";
 import { ProposalCard } from "./ProposalCard";
@@ -19,6 +20,11 @@ export function AgentPanel({
   riskAcknowledged?: boolean;
   mainnetLiveAllowed?: boolean;
 }) {
+  const { push: toast } = useToast();
+  const notify = (message: string, tone: "info" | "ok" | "err" = "info") => {
+    setMsg(message);
+    if (tone === "err" || tone === "ok") toast(message, tone);
+  };
   const [fromSymbol, setFromSymbol] = useState("USDC");
   const [toSymbol, setToSymbol] = useState("NEAR");
   const [amountUsd, setAmountUsd] = useState(5);
@@ -44,7 +50,7 @@ export function AgentPanel({
       });
       const data = await res.json();
       if (!data.ok) {
-        setMsg(data.error || "Propose failed");
+        notify(data.error || "Propose failed", "err");
         setProposal(null);
         setGuard(null);
         return;
@@ -53,7 +59,7 @@ export function AgentPanel({
       setGuard(data.guard);
       if (data.quote) setQuote(data.quote);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "error");
+      notify(e instanceof Error ? e.message : "error", "err");
     } finally {
       setBusy(false);
     }
@@ -115,9 +121,9 @@ export function AgentPanel({
         checks: data.checks || [],
         proposalId: fakeProposal.id,
       });
-      setMsg("Seatbelt BLOCKed a bad trade (allowlist + size + slippage + consensus).");
+      notify("Seatbelt BLOCKed a bad trade (allowlist + size + slippage + consensus).", "err");
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "error");
+      notify(e instanceof Error ? e.message : "error", "err");
     } finally {
       setBusy(false);
     }
@@ -135,15 +141,15 @@ export function AgentPanel({
       });
       const data = await res.json();
       if (!data.ok) {
-        setMsg(data.error || "Approve failed");
+        notify(data.error || "Approve failed", "err");
         if (data.guard) setGuard(data.guard);
         return;
       }
       setApproved(true);
-      setMsg("Human approval recorded. Dry-quote anytime; real execute needs mainnet flags + $1 cap.");
+      notify("Human approval recorded. Dry-quote anytime; real execute needs mainnet flags + $1 cap.", "ok");
       if (data.guard) setGuard(data.guard);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "error");
+      notify(e instanceof Error ? e.message : "error", "err");
     } finally {
       setBusy(false);
     }
@@ -163,12 +169,12 @@ export function AgentPanel({
       if (data.guard) setGuard(data.guard);
       if (data.quote) setQuote(data.quote);
       if (!data.ok) {
-        setMsg(data.error || "Quote failed");
+        notify(data.error || "Quote failed", "err");
         return;
       }
-      setMsg(data.quote?.simulated ? "Simulated dry quote (fallback)." : "Live 1Click dry quote.");
+      notify(data.quote?.simulated ? "Simulated dry quote (fallback)." : "Live 1Click dry quote.", "ok");
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "error");
+      notify(e instanceof Error ? e.message : "error", "err");
     } finally {
       setBusy(false);
     }
