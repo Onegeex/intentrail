@@ -1,5 +1,5 @@
 {
- "ranAt": "2026-11-07T14:34:12.846Z",
+ "ranAt": "2026-11-07T17:03:40.564Z",
  "attempts": [
   {
    "id": "withdraw",
@@ -16,7 +16,7 @@
    "title": "Transfer wNEAR straight from the token contract",
    "how": "The agent key signs ft_transfer on wrap.testnet to the attacker.",
    "blocked": true,
-   "blockedBy": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault3-39ae84.testnet does not match transaction receiver wrap.testnet\"",
+   "blockedBy": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault4-39ae84.testnet does not match transaction receiver wrap.testnet\"",
    "result": {}
   },
   {
@@ -36,8 +36,8 @@
    "blocked": true,
    "blockedBy": "Refused by the contract: Only the vault's agent key or the owner can execute trades",
    "result": {
-    "txHash": "5UjWGKzz9MBmNe28koBRgvtCnmvG7x4W88CcnM32Hnxa",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/5UjWGKzz9MBmNe28koBRgvtCnmvG7x4W88CcnM32Hnxa"
+    "txHash": "8jfnQRr6AvpkjdaxAEoai3dNboGvXieB9Fom2k3Jsbag",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/8jfnQRr6AvpkjdaxAEoai3dNboGvXieB9Fom2k3Jsbag"
    }
   },
   {
@@ -48,8 +48,8 @@
    "blocked": true,
    "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key.",
    "result": {
-    "txHash": "Fo9VbiMvWBmXby1JxYA4Zi1Gmtvb8euqQGyvt2BaC7e7",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/Fo9VbiMvWBmXby1JxYA4Zi1Gmtvb8euqQGyvt2BaC7e7"
+    "txHash": "H1F4vfX2hh3JXeL7pbgYcnJ9RbPA4bXprvvEyRA7CUAG",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/H1F4vfX2hh3JXeL7pbgYcnJ9RbPA4bXprvvEyRA7CUAG"
    }
   },
   {
@@ -60,8 +60,8 @@
    "blocked": true,
    "blockedBy": "Contract check SIZE: $50 is over the $10 per-trade cap.",
    "result": {
-    "txHash": "8Zo78vc3nj4u4eVMzo5sx4QZ4KAuy1eR2aTY38TFKnAq",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/8Zo78vc3nj4u4eVMzo5sx4QZ4KAuy1eR2aTY38TFKnAq"
+    "txHash": "Ab2qeYkSkCJMj9tjKCXJndo6nfyfqAywvFCJ87sh3Xqz",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/Ab2qeYkSkCJMj9tjKCXJndo6nfyfqAywvFCJ87sh3Xqz"
    }
   },
   {
@@ -72,8 +72,8 @@
    "blocked": true,
    "blockedBy": "Contract check PRICE_FLOOR: The quote's minimum output is below the owner's price floor for this pair.",
    "result": {
-    "txHash": "3t47DaVjqiQLPnUwf1DVLDKHBwmTpKN58Nv2UjkcdfXE",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/3t47DaVjqiQLPnUwf1DVLDKHBwmTpKN58Nv2UjkcdfXE"
+    "txHash": "AagXatd7UyVPKYY1iPeUsChPLxvwKdcNNQsAR1xPrbrV",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/AagXatd7UyVPKYY1iPeUsChPLxvwKdcNNQsAR1xPrbrV"
    }
   },
   {
@@ -84,8 +84,8 @@
    "blocked": true,
    "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key.",
    "result": {
-    "txHash": "9zGggoicJuEpSv1S4wxtQU2CypsgdPFLRvgD9b1mrjuH",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/9zGggoicJuEpSv1S4wxtQU2CypsgdPFLRvgD9b1mrjuH"
+    "txHash": "3A8iyt5NHHxGhK46D4dJVVVNH2ruezEZ4AsTHP7ZXXqT",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/3A8iyt5NHHxGhK46D4dJVVVNH2ruezEZ4AsTHP7ZXXqT"
    }
   },
   {
@@ -96,8 +96,8 @@
    "blocked": true,
    "blockedBy": "Contract check QUOTE_REPLAY: Quote was already used.",
    "result": {
-    "txHash": "HR7XFkV74bti1MSL1RHD3w9ejafY92EXikNa6inmEF9j",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/HR7XFkV74bti1MSL1RHD3w9ejafY92EXikNa6inmEF9j"
+    "txHash": "2pLobEHvNawzNRiui6SFqUdSSiKEWdTPPzRoZsii61dy",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/2pLobEHvNawzNRiui6SFqUdSSiKEWdTPPzRoZsii61dy"
    }
   },
   {
@@ -108,8 +108,8 @@
    "blocked": true,
    "blockedBy": "Contract check VENUE: intentrail-attacker-39ae84.testnet is not an allowed venue.",
    "result": {
-    "txHash": "2uU7Hp4RywRMa25AQbP2c92WDoqNYuzkhbmXiavzGqNQ",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/2uU7Hp4RywRMa25AQbP2c92WDoqNYuzkhbmXiavzGqNQ"
+    "txHash": "28Ceu1K6m8qoRiNdCmC59QLofhQMmVofEBFP4EAEZJwf",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/28Ceu1K6m8qoRiNdCmC59QLofhQMmVofEBFP4EAEZJwf"
    }
   },
   {
@@ -120,8 +120,8 @@
    "blocked": true,
    "blockedBy": "Refused at the venue. ref-finance-101.testnet said: \"E68: slippage error\". The vault was refunded and its daily spend restored.",
    "result": {
-    "txHash": "4cayYyLuD8mBHkkQr5W1cZdDQD8M5M4Hu7oHceacp3Rw",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/4cayYyLuD8mBHkkQr5W1cZdDQD8M5M4Hu7oHceacp3Rw"
+    "txHash": "B9SykkBVeqL3JPKneeTTX33hAbPWUuxGZ6KANFWmcP26",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/B9SykkBVeqL3JPKneeTTX33hAbPWUuxGZ6KANFWmcP26"
    }
   },
   {
@@ -132,8 +132,8 @@
    "blocked": false,
    "blockedBy": "Ref filled it: 0.3000 wNEAR for 0.3725 USDT, paid to the vault.",
    "result": {
-    "txHash": "8wCyrAFtKouqgFHjR5WT8djSBECwmBwKD7qqNgQPKT6F",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/8wCyrAFtKouqgFHjR5WT8djSBECwmBwKD7qqNgQPKT6F"
+    "txHash": "SwuxwcqxarQcR2GS9CYbzr66cWxM1cXJpajkMA6217p",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/SwuxwcqxarQcR2GS9CYbzr66cWxM1cXJpajkMA6217p"
    }
   }
  ]
