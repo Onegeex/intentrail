@@ -9,10 +9,11 @@ export default async function SecurityPage() {
   return (
     <main className="mx-auto max-w-4xl px-4 sm:px-6 py-10 sm:py-14 space-y-10 overflow-x-hidden">
       <header className="space-y-4">
-        <h1 className="font-display font-black leading-[0.9] tracking-wide text-ivory text-[clamp(3rem,7vw,6rem)]">Seatbelt API</h1>
+        <h1 className="font-display font-black leading-[0.9] tracking-wide text-ivory text-[clamp(3rem,7vw,6rem)]">Guard API</h1>
         <p className="text-lg text-ivory-dim max-w-[52ch] leading-relaxed">
-          Call the same fail-closed engine that guards the signal box. The presets cover one
-          allowed trade and two blocked ones. The full security model is below.
+          A preflight check for any agent. Send the pair and size; the guard prices the trade
+          from a live NEAR Intents quote and computes every number itself. Funds held in a
+          GuardVault only move when the contract agrees too.
         </p>
         <p className="text-sm">
           <a className="text-points underline decoration-points/40 underline-offset-4 min-h-11 inline-flex items-center" href="/api/guard/check">

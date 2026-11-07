@@ -4,62 +4,47 @@ import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgentPanel } from "@/components/AgentPanel";
-import { BacktestPanel } from "@/components/BacktestPanel";
-import { FunctionCallKeyPanel } from "@/components/FunctionCallKeyPanel";
-import { GuardrailPanel } from "@/components/GuardrailPanel";
-import { DepartureBoard, RuleBook } from "@/components/rail/DepartureBoard";
 import { HeroScene, type HeroEvent } from "@/components/rail/HeroScene";
 import { LiveProvider, useLive } from "@/components/rail/LiveContext";
-import { SignalBox } from "@/components/rail/SignalBox";
 import { useToast } from "@/components/Toast";
+import { AttackDemo, type AttackRun } from "@/components/vault/AttackDemo";
+import { CONTRACT_SRC, REPO } from "@/components/vault/format";
+import { VaultPanel } from "@/components/vault/VaultPanel";
 import { WalletConnect } from "@/components/WalletConnect";
 import { resetWalletCache, type NearNetwork } from "@/lib/near-wallet";
+import type { VaultSnapshot } from "@/lib/vault";
 
-const HEADLINE = ["Ten signals between", "your agent and", "your money."];
+const HEADLINE = ["Your agent can trade.", "It can't drain", "the wallet."];
+const SITE = "https://intentrail-neon.vercel.app";
 
-const SNIPPET = `const res = await fetch("https://intentrail-neon.vercel.app/api/guard/check", {
+const SNIPPET = `// Send only the trade. The guard prices it itself.
+const res = await fetch("${SITE}/api/guard/check", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    fromSymbol: "USDC", toSymbol: "NEAR", amountUsd: 5,
-    slippageBps: 50, stopLossPct: 2, feeAwareOk: true,
-    votes: [
-      { agent: "trend", vote: "yes", reason: "up" },
-      { agent: "risk", vote: "yes", reason: "sized" },
-    ],
-  }),
+  body: JSON.stringify({ fromSymbol: "USDC", toSymbol: "NEAR", amountUsd: 5 }),
 });
-const { allowed, decision, reason, checks } = await res.json();`;
+const { allowed, checks, computed, ignoredFields } = await res.json();
+// computed.costBps comes from a live NEAR Intents quote, not from your agent.`;
 
-function Hero({ network }: { network: NearNetwork }) {
+function Hero({ stats }: { stats: VaultSnapshot["stats"] | null }) {
   const reduce = useReducedMotion();
   const { data } = useLive();
   const [event, setEvent] = useState<HeroEvent | null>(null);
-  const [counts, setCounts] = useState({ cleared: 0, held: 0 });
 
   const policy = useMemo(
     () => ({
       allowlist: data?.policy.allowlistedSymbols ?? ["NEAR", "USDC", "WETH", "ETH", "BTC"],
-      min: data?.hardCaps?.minTradeUsd ?? 1,
-      max: data?.hardCaps?.maxTradeUsd ?? 50,
+      min: 1,
+      max: 10,
     }),
     [data],
   );
-
-  const onEvent = useCallback((e: HeroEvent) => {
-    setEvent(e);
-    setCounts((c) => (e.cleared ? { ...c, cleared: c.cleared + 1 } : { ...c, held: c.held + 1 }));
-  }, []);
+  const onEvent = useCallback((e: HeroEvent) => setEvent(e), []);
 
   return (
-    <header className="relative isolate h-[calc(100svh-61px)] min-h-[600px] max-h-[1000px] overflow-hidden border-b border-rule">
+    <header className="relative isolate h-[calc(100svh-61px)] min-h-[620px] max-h-[1000px] overflow-hidden border-b border-rule">
       <HeroScene policy={policy} onEvent={onEvent} />
-      {/* Scrim so type stays readable over the scene */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[62%] bg-gradient-to-t from-[#070e10] via-[#070e10]/70 to-transparent lg:h-full lg:bg-gradient-to-r lg:from-[#070e10]/95 lg:via-[#070e10]/50 lg:via-40% lg:to-transparent lg:to-65%" />
-
-      <div className="absolute right-4 top-4 hidden sm:block sm:right-6 sm:top-6">
-        <WalletConnect network={network} />
-      </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[64%] bg-gradient-to-t from-[#070e10] via-[#070e10]/70 to-transparent lg:h-full lg:bg-gradient-to-r lg:from-[#070e10]/95 lg:via-[#070e10]/50 lg:via-40% lg:to-transparent lg:to-65%" />
 
       <div className="absolute inset-x-0 bottom-0">
         <div className="mx-auto grid max-w-6xl gap-8 px-4 pb-10 sm:px-6 sm:pb-14 lg:grid-cols-[1fr_300px] lg:items-end">
@@ -79,13 +64,13 @@ function Hero({ network }: { network: NearNetwork }) {
               ))}
             </h1>
             <motion.p
-              className="max-w-[48ch] text-lg leading-relaxed text-ivory/80 sm:text-xl"
+              className="max-w-[50ch] text-lg leading-relaxed text-ivory/85 sm:text-xl"
               initial={reduce ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.85 }}
             >
-              IntentRail checks every trade an AI agent proposes on NEAR Intents before it can move
-              funds. One failed check and the trade goes nowhere.
+              IntentRail is a NEAR contract that holds an AI agent&apos;s trading money. The agent&apos;s key can only ask.
+              The contract decides, using limits the agent can&apos;t change.
             </motion.p>
             <motion.div
               className="flex flex-wrap items-center gap-3"
@@ -94,44 +79,38 @@ function Hero({ network }: { network: NearNetwork }) {
               transition={{ duration: 0.6, delay: 1 }}
             >
               <a
-                href="#signal-box"
+                href="#attack"
                 className="inline-flex min-h-12 items-center rounded-full bg-ivory px-6 font-display text-xl font-black tracking-wide text-panel-deep transition-transform hover:-translate-y-0.5"
               >
-                Send a real trade
+                Watch an attack fail
               </a>
-              <Link
-                href="/security"
+              <a
+                href={CONTRACT_SRC}
                 className="inline-flex min-h-12 items-center rounded-full border border-ivory/30 bg-black/20 px-6 font-display text-xl font-extrabold tracking-wide text-ivory backdrop-blur-sm hover:border-ivory/60"
               >
-                Use the API
-              </Link>
+                Read the contract
+              </a>
             </motion.div>
           </div>
 
-          {/* Live caption of what the scene just did */}
           <motion.aside
             className="hidden rounded-2xl border border-rule/80 bg-[#070e10]/70 p-4 backdrop-blur-md lg:block"
             initial={reduce ? false : { opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.6, delay: 1.2 }}
-            aria-live="polite"
           >
-            <div className="flex gap-5 text-sm">
-              <span className="text-ivory-dim">
-                Cleared <span className="font-mono text-lg text-proceed">{counts.cleared}</span>
-              </span>
-              <span className="text-ivory-dim">
-                Held <span className="font-mono text-lg text-danger">{counts.held}</span>
-              </span>
-            </div>
-            <div className="mt-3 min-h-[4.5rem]">
+            {stats && (
+              <div className="border-b border-rule/70 pb-3">
+                <p className="text-xs text-ivory-dim">The real vault on NEAR testnet</p>
+                <p className="mt-1 text-sm text-ivory">
+                  <span className="font-mono text-lg text-proceed">{stats.executed}</span> trades executed,{" "}
+                  <span className="font-mono text-lg text-danger">{stats.rejected}</span> refused
+                </p>
+              </div>
+            )}
+            <div className="mt-3 min-h-[4.5rem]" aria-live="polite">
               {event ? (
-                <motion.div
-                  key={`${event.label}-${counts.cleared + counts.held}`}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25 }}
-                >
+                <motion.div key={`${event.label}-${event.detail}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
                   <p className={`font-display text-2xl font-extrabold tracking-wide ${event.cleared ? "text-proceed" : "text-danger"}`}>
                     {event.label}
                   </p>
@@ -141,9 +120,7 @@ function Hero({ network }: { network: NearNetwork }) {
                 <p className="text-sm text-ivory-dim">The first trade is on its way.</p>
               )}
             </div>
-            <p className="mt-3 border-t border-rule/70 pt-2 text-xs text-ivory-dim">
-              Illustration using the server&apos;s real allowlist and size limit.
-            </p>
+            <p className="mt-2 text-xs text-ivory-dim">This scene is an illustration. The attempts below are real.</p>
           </motion.aside>
         </div>
       </div>
@@ -151,27 +128,37 @@ function Hero({ network }: { network: NearNetwork }) {
   );
 }
 
+function Section({ id, title, lede, children }: { id?: string; title: string; lede?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section id={id} className="scroll-mt-24 space-y-10">
+      <div className="max-w-3xl space-y-3">
+        <h2 className="font-display text-5xl font-black leading-[0.92] tracking-wide text-ivory sm:text-6xl">{title}</h2>
+        {lede && <p className="text-lg leading-relaxed text-ivory-dim">{lede}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function ApiSection() {
   const { push } = useToast();
   return (
-    <section className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
-      <div className="space-y-4">
-        <h2 className="font-display text-5xl font-black leading-[0.92] tracking-wide text-ivory sm:text-6xl">
-          Put the same signals in front of your own agent.
-        </h2>
-        <p className="max-w-[44ch] text-lg leading-relaxed text-ivory-dim">
-          One POST to <code className="font-mono text-ivory">/api/guard/check</code> returns
-          allowed or blocked, with the reason for every check. It works from any origin, and it
-          fails closed: anything it can&apos;t verify is blocked.
+    <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+      <div className="space-y-4 text-lg leading-relaxed text-ivory-dim">
+        <p>
+          Other agents can use the guard as a preflight check. Send the pair and size. The guard prices the trade from a
+          live NEAR Intents 1Click quote and returns every check with its numbers.
         </p>
-        <Link
-          href="/security"
-          className="inline-flex min-h-11 items-center text-base font-semibold text-points underline decoration-points/40 underline-offset-4 hover:decoration-points"
-        >
+        <p>
+          It ignores anything an agent says about itself, such as its fees, stop-loss or votes, and lists those fields
+          under <code className="font-mono text-ivory">ignoredFields</code>. Limits that need memory, like the daily cap,
+          live in the vault contract.
+        </p>
+        <Link href="/security" className="inline-flex min-h-11 items-center text-base font-semibold text-points underline decoration-points/40 underline-offset-4">
           Open the API playground
         </Link>
       </div>
-      <div className="overflow-hidden rounded-[28px] border border-rule bg-panel-deep">
+      <div className="overflow-hidden rounded-[24px] border border-rule bg-panel-deep">
         <div className="flex items-center justify-between border-b border-rule px-5 py-3">
           <span className="text-sm text-ivory-dim">JavaScript</span>
           <button
@@ -189,24 +176,20 @@ function ApiSection() {
             Copy code
           </button>
         </div>
-        <pre className="overflow-x-auto p-5 font-mono text-[12px] leading-relaxed text-ivory sm:text-[13px]">
-          {SNIPPET}
-        </pre>
+        <pre className="overflow-x-auto p-5 font-mono text-[12px] leading-relaxed text-ivory sm:text-[13px]">{SNIPPET}</pre>
       </div>
-    </section>
+    </div>
   );
 }
 
-export function HomeClient({ mainnetLiveAllowed }: { mainnetLiveAllowed: boolean }) {
+function MainnetSwap({ mainnetLiveAllowed }: { mainnetLiveAllowed: boolean }) {
   const [liveMode, setLiveMode] = useState(false);
   const [network, setNetwork] = useState<NearNetwork>("testnet");
   const [riskAck, setRiskAck] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     resetWalletCache();
   }, [network]);
-
   useEffect(() => {
     if (!liveMode) {
       setNetwork("testnet");
@@ -214,166 +197,115 @@ export function HomeClient({ mainnetLiveAllowed }: { mainnetLiveAllowed: boolean
     }
   }, [liveMode]);
 
-  useEffect(() => {
-    if (liveMode && network === "mainnet" && !mainnetLiveAllowed) {
-      setNetwork("testnet");
-    }
-  }, [liveMode, network, mainnetLiveAllowed]);
+  return (
+    <details className="group rounded-[24px] border border-rule bg-panel-raised">
+      <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-4 p-5 sm:p-7">
+        <span>
+          <span className="block font-display text-3xl font-black tracking-wide text-ivory">Try a real $1 swap on mainnet</span>
+          <span className="block text-sm text-ivory-dim">
+            Optional. Uses NEAR Intents 1Click with your own wallet. Capped at $1 a swap and $3 a day.
+          </span>
+        </span>
+        <span className="font-display text-3xl text-ivory-dim transition-transform group-open:rotate-45">+</span>
+      </summary>
+      <div className="space-y-6 border-t border-rule p-5 sm:p-7">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <WalletConnect network={network} />
+          <label className="flex items-center gap-3 text-ivory">
+            <input type="checkbox" className="h-5 w-5" checked={liveMode} onChange={(e) => setLiveMode(e.target.checked)} />
+            Use mainnet
+          </label>
+        </div>
+        {liveMode && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm text-ivory-dim">
+              Network
+              <select
+                className="mt-1 min-h-11 w-full rounded-xl border border-rule px-3 text-ivory"
+                value={network}
+                onChange={(e) => setNetwork(e.target.value as NearNetwork)}
+              >
+                <option value="testnet">Testnet</option>
+                <option value="mainnet" disabled={!mainnetLiveAllowed}>
+                  Mainnet{!mainnetLiveAllowed ? " (turned off by the operator)" : ""}
+                </option>
+              </select>
+            </label>
+            <label className="flex items-start gap-3 text-sm text-ivory">
+              <input type="checkbox" className="mt-1 h-5 w-5 shrink-0" checked={riskAck} onChange={(e) => setRiskAck(e.target.checked)} />
+              I understand this can move up to $1 of my funds per swap after I sign.
+            </label>
+          </div>
+        )}
+        <AgentPanel demo={false} network={network} liveMode={liveMode} riskAcknowledged={riskAck} mainnetLiveAllowed={mainnetLiveAllowed} />
+      </div>
+    </details>
+  );
+}
 
+export function HomeClient({
+  mainnetLiveAllowed,
+  vault,
+  ownerId,
+  recordedAttack,
+  evidence,
+  howItWorks,
+  whyNear,
+}: {
+  mainnetLiveAllowed: boolean;
+  vault: VaultSnapshot | null;
+  ownerId: string;
+  recordedAttack: AttackRun;
+  evidence: React.ReactNode;
+  howItWorks: React.ReactNode;
+  whyNear: React.ReactNode;
+}) {
   return (
     <LiveProvider>
-      <Hero network={network} />
-      <div className="sm:hidden px-4 pt-6">
-        <WalletConnect network={network} />
-      </div>
-      <main className="mx-auto max-w-6xl space-y-16 px-4 pt-14 pb-16 sm:space-y-24 sm:px-6 sm:pt-20 overflow-x-hidden">
-        <section id="signal-box" className="scroll-mt-24 space-y-8">
-          <div className="space-y-3">
-            <h2 className="font-display text-5xl font-black leading-[0.92] tracking-wide text-ivory sm:text-6xl">
-              Now try the real line.
-            </h2>
-            <p className="max-w-[52ch] text-lg leading-relaxed text-ivory-dim">
-              Every train below is a real call to the seatbelt. Send your own trade and watch each
-              signal answer it.
-            </p>
-          </div>
-          <SignalBox />
-        </section>
+      <Hero stats={vault?.stats ?? null} />
+      <main className="mx-auto max-w-6xl space-y-24 px-4 pb-16 pt-16 sm:space-y-32 sm:px-6 sm:pt-24 overflow-x-hidden">
+        <Section
+          id="attack"
+          title="We gave the agent's key to an attacker."
+          lede="Each row is a real attempt to take money out of the vault, sent to NEAR testnet with the agent's own key. Some are refused by NEAR before they run. The rest reach the contract and are refused there."
+        >
+          <AttackDemo recorded={recordedAttack} />
+        </Section>
 
-        <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
-          <DepartureBoard />
-          <RuleBook />
-        </div>
+        <Section
+          id="vault"
+          title="The vault, live"
+          lede="Everything on this panel is read from the chain. Make the agent trade and watch the contract decide."
+        >
+          <VaultPanel initial={vault} ownerId={ownerId} />
+        </Section>
 
-        <ApiSection />
+        {howItWorks}
+        {whyNear}
+        {evidence}
 
-        {/* Control room: real wallet actions */}
-        <section className="space-y-8">
-          <div className="grid gap-6 lg:grid-cols-[1fr_1fr] lg:items-end">
-            <div className="space-y-3">
-              <h2 className="font-display text-5xl font-black leading-[0.92] tracking-wide text-ivory sm:text-6xl">
-                Control room
-              </h2>
-              <p className="max-w-[46ch] text-lg leading-relaxed text-ivory-dim">
-                Run the agent yourself. On testnet nothing real moves. Live mode can prepare a
-                real swap of $1 or less that you sign in your own wallet.
-              </p>
-            </div>
+        <Section id="api" title="A preflight check for any agent">
+          <ApiSection />
+        </Section>
 
-            <div className="rounded-[28px] border border-rule bg-panel-raised p-5 space-y-4">
-              <label className="flex min-h-11 items-center justify-between gap-4">
-                <span>
-                  <span className="block font-display text-2xl font-extrabold tracking-wide text-ivory">
-                    Live mode
-                  </span>
-                  <span className="block text-sm text-ivory-dim">
-                    Off by default. $1 per swap, $3 per wallet a day.
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={liveMode}
-                  onClick={() => setLiveMode((v) => !v)}
-                  className={`relative h-9 w-16 shrink-0 rounded-full border transition-colors ${
-                    liveMode ? "border-caution bg-caution/25" : "border-rule bg-panel-deep"
-                  }`}
-                >
-                  <motion.span
-                    className={`absolute top-1 h-6 w-6 rounded-full ${liveMode ? "bg-caution" : "bg-ivory-dim"}`}
-                    animate={{ left: liveMode ? 34 : 5 }}
-                    transition={{ type: "spring", stiffness: 500, damping: 32 }}
-                  />
-                  <span className="sr-only">Live mode</span>
-                </button>
-              </label>
-              {liveMode && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  className="grid gap-3 border-t border-rule pt-4 sm:grid-cols-2"
-                >
-                  <label className="text-sm text-ivory-dim">
-                    Network
-                    <select
-                      className="mt-1 min-h-11 w-full rounded-xl border border-rule px-3 text-ivory"
-                      value={network}
-                      onChange={(e) => setNetwork(e.target.value as NearNetwork)}
-                    >
-                      <option value="testnet">Testnet</option>
-                      <option value="mainnet" disabled={!mainnetLiveAllowed}>
-                        Mainnet{!mainnetLiveAllowed ? " (turned off by the operator)" : ""}
-                      </option>
-                    </select>
-                  </label>
-                  <label className="flex items-start gap-3 text-sm text-ivory">
-                    <input
-                      type="checkbox"
-                      className="mt-1 h-5 w-5 shrink-0"
-                      checked={riskAck}
-                      onChange={(e) => setRiskAck(e.target.checked)}
-                    />
-                    I understand mainnet can move up to $1 of my funds per swap after I sign.
-                  </label>
-                </motion.div>
-              )}
-            </div>
-          </div>
+        <MainnetSwap mainnetLiveAllowed={mainnetLiveAllowed} />
 
-          <AgentPanel
-            demo={false}
-            network={network}
-            liveMode={liveMode}
-            riskAcknowledged={riskAck}
-            mainnetLiveAllowed={mainnetLiveAllowed}
-          />
-
-          <div className="space-y-6">
-            <button
-              type="button"
-              aria-expanded={showAdvanced}
-              onClick={() => setShowAdvanced((v) => !v)}
-              className="min-h-11 rounded-full border border-rule px-5 text-sm text-ivory hover:border-ivory-dim"
-            >
-              {showAdvanced ? "Hide backtest, keys and limits" : "Show backtest, keys and limits"}
-            </button>
-            {showAdvanced && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
-                <BacktestPanel />
-                <FunctionCallKeyPanel network={network} />
-                <GuardrailPanel />
-              </motion.div>
-            )}
-          </div>
-        </section>
-
-        <footer className="border-t border-rule pt-8 space-y-4">
-          <h2 className="font-display text-2xl font-extrabold tracking-wide text-ivory">
-            Judging a real swap
-          </h2>
-          <ol className="grid gap-3 text-sm text-ivory-dim sm:grid-cols-3 lg:grid-cols-6">
-            {[
-              "Connect a wallet",
-              "Turn on Live mode",
-              "Pick mainnet and confirm the risk",
-              "Propose $1 USDC to NEAR",
-              "Approve and prepare the quote",
-              "Sign the deposit in your wallet",
-            ].map((s, i) => (
-              <li key={s} className="flex gap-2">
-                <span className="font-display text-xl font-black leading-none text-caution">{i + 1}</span>
-                <span>{s}</span>
-              </li>
-            ))}
-          </ol>
-          <p className="text-sm text-ivory-dim">
-            The operator can shut mainnet off at any time with{" "}
-            <code className="font-mono text-ivory">MAINNET_DISABLED=true</code>.
-          </p>
+        <footer className="flex flex-col gap-4 border-t border-rule pt-8 text-sm text-ivory-dim sm:flex-row sm:items-center sm:justify-between">
+          <p>IntentRail. Built for the NEAR hackathon. MIT licensed.</p>
+          <nav className="flex flex-wrap gap-x-6 gap-y-2">
+            <a className="text-ivory hover:underline" href={REPO}>
+              GitHub
+            </a>
+            <a className="text-ivory hover:underline" href={`${REPO}#readme`}>
+              Docs
+            </a>
+            <a className="text-ivory hover:underline" href={CONTRACT_SRC}>
+              Contract
+            </a>
+            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vault?.vaultId ?? "intentrail-vault-39ae84.testnet"}`}>
+              Vault on NearBlocks
+            </a>
+          </nav>
         </footer>
       </main>
     </LiveProvider>

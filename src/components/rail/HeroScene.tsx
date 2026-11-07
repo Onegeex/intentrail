@@ -3,8 +3,8 @@
 import { useEffect, useRef } from "react";
 
 /*
- * Full-bleed hero: a track running toward the viewer under a gantry of ten
- * signal lamps, one per guard check. Trades arrive from the horizon. Cleared
+ * Full-bleed hero: a track running toward the viewer under a gantry of
+ * signal lamps, one per on-chain GuardVault check. Trades arrive from the horizon. Cleared
  * trades rush past the camera; blocked ones brake under a red lamp and are
  * switched into a siding. Outcomes use the server's real allowlist and size
  * limits when available; the scene itself is an illustration.
@@ -18,18 +18,20 @@ export type HeroEvent = {
 
 type Policy = { allowlist: string[]; min: number; max: number };
 
+/** The GuardVault contract's on-chain checks, in the order it runs them. */
 const CHECK_NAMES = [
   "Kill switch",
+  "Signature",
+  "Fresh quote",
   "Allowlist",
-  "Size",
-  "Max loss",
+  "Venue",
+  "Size cap",
+  "Fee cap",
   "Daily cap",
-  "Slippage",
-  "Fees",
-  "Consensus",
-  "Pair",
   "Approval",
 ];
+const ALLOWLIST_AT = 3;
+const SIZE_AT = 5;
 
 const COLORS = {
   ivory: "236,230,211",
@@ -87,13 +89,13 @@ function makeTrade(policy: Policy, n: number): Trade {
   const listedOk = listed.includes(from) && listed.includes(to);
   const sizeOk = amount >= policy.min && amount <= policy.max;
   let blockAt: number | null = null;
-  let detail = "Passed all ten signals. Waiting for a person to sign.";
+  let detail = "Passed every check. The agent trades without asking anyone.";
   if (!listedOk) {
-    blockAt = 1;
+    blockAt = ALLOWLIST_AT;
     const bad = listed.includes(from) ? to : from;
     detail = `${bad} isn't on the allowlist.`;
   } else if (!sizeOk) {
-    blockAt = 2;
+    blockAt = SIZE_AT;
     detail = `$${amount} is over the $${policy.max} limit per trade.`;
   }
   return { from, to, amount, blockAt, detail };
@@ -232,7 +234,7 @@ export function HeroScene({
             emit({
               cleared: false,
               label: `${tr.trade.from} to ${tr.trade.to}, $${tr.trade.amount}`,
-              detail: `Held at ${CHECK_NAMES[stopAt]}. ${tr.trade.detail}`,
+              detail: `Refused at ${CHECK_NAMES[stopAt]}. ${tr.trade.detail}`,
             });
           }
         }
@@ -438,7 +440,7 @@ export function HeroScene({
       // Lamps
       const font = `"Big Shoulders Display", "Overpass Variable", sans-serif`;
       CHECK_NAMES.forEach((name, i) => {
-        const lx = -4.5 + i;
+        const lx = -4 + i;
         const q = P(lx, LAMP_Y, GANTRY_Z);
         const r = Math.max(4, 0.3 * q.s);
         const l = lamps[i];
@@ -608,17 +610,17 @@ export function HeroScene({
 
     if (reduce) {
       // One still frame: a trade held under a red lamp.
-      train.trade = { from: "USDC", to: "DOGE", amount: 5, blockAt: 1, detail: "DOGE isn't on the allowlist." };
+      train.trade = { from: "USDC", to: "DOGE", amount: 5, blockAt: ALLOWLIST_AT, detail: "DOGE isn't on the allowlist." };
       train.phase = "divert";
       train.alpha = 1;
       train.t = 0.55;
-      lamps = lamps.map((_, i) => ({ state: i === 0 ? 1 : i === 1 ? 2 : 0, glow: i < 2 ? 1 : 0 }));
+      lamps = lamps.map((_, i) => ({ state: i < ALLOWLIST_AT ? 1 : i === ALLOWLIST_AT ? 2 : 0, glow: i <= ALLOWLIST_AT ? 1 : 0 }));
       const p = sidingPath(1, smooth(0.35));
       train.z = p.z;
       train.x = p.x;
       document.fonts?.ready.then(() => draw(0));
       draw(0);
-      emit({ cleared: false, label: "USDC to DOGE, $5", detail: "Held at Allowlist. DOGE isn't on the allowlist." });
+      emit({ cleared: false, label: "USDC to DOGE, $5", detail: "Refused at Allowlist. DOGE isn't on the allowlist." });
     } else {
       raf = requestAnimationFrame(loop);
     }

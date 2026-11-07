@@ -221,14 +221,13 @@ function parseResponse(r: unknown): TxResult {
 function describeError(e: unknown): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const err = e as any;
-  const raw = [err?.type, err?.message, err?.cause?.message, JSON.stringify(err?.data ?? err?.cause?.data ?? "")]
-    .filter(Boolean)
-    .join(" ");
-  if (/MethodNameMismatch|method_name/i.test(raw)) return "NEAR refused it: this key may only call execute().";
-  if (/ReceiverMismatch|receiver/i.test(raw)) return "NEAR refused it: this key may only call the vault contract.";
-  if (/RequiresFullAccess|full access/i.test(raw)) return "NEAR refused it: moving tokens needs a full-access key, and the vault has none.";
-  if (/NotEnoughAllowance/i.test(raw)) return "The agent key's gas allowance is used up.";
-  return `NEAR refused it: ${raw.slice(0, 240)}`;
+  const raw = [err?.message, err?.cause?.message].filter(Boolean).join(" ").replace(/\s*""\s*$/, "").trim();
+  const said = raw ? ` NEAR said: "${raw.slice(0, 200)}"` : "";
+  if (/does not allow method|MethodName/i.test(raw)) return `Refused by NEAR: the agent's key may only call execute().${said}`;
+  if (/receiver|Receiver/i.test(raw)) return `Refused by NEAR: the agent's key only works on the vault contract.${said}`;
+  if (/full access|FullAccess|Transfer|transfer/i.test(raw)) return `Refused by NEAR: sending tokens needs a full-access key, and the vault has none.${said}`;
+  if (/allowance/i.test(raw)) return `Refused by NEAR: the agent's key has no budget for that.${said}`;
+  return `Refused by NEAR.${said}`;
 }
 
 /** Agent calls execute() with a guard-signed quote. */
@@ -277,14 +276,15 @@ export async function agentAttempt(
       r = await acct.signAndSendTransaction({
         receiverId: WRAP_ID,
         actions: [
-          actions.functionCall("ft_transfer", { receiver_id: attacker, amount: "1000000000000000000000000" }, BigInt("30000000000000"), BigInt(1)),
+          actions.functionCall("ft_transfer", { receiver_id: attacker, amount: "1000000000000000000000000" }, BigInt("30000000000000"), BigInt(0)),
         ],
         throwOnFailure: false,
       } as never);
     } else {
       r = await acct.signAndSendTransaction({
         receiverId: attacker,
-        actions: [actions.transfer(BigInt("1000000000000000000000000"))],
+        // A small amount, so the refusal is about permission, not the key's fee allowance.
+        actions: [actions.transfer(BigInt("1000000000000000000"))],
         throwOnFailure: false,
       } as never);
     }

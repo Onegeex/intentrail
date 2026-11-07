@@ -1,95 +1,33 @@
-# IntentRail Security Model
+# IntentRail security model
 
-IntentRail is an AI trading agent that can move value through NEAR Intents.
-This document is the threat model and the controls we enforce. If a control and
-a feature disagree, the control wins.
+The rule: funds move only when the GuardVault contract agrees. Everything off-chain can refuse a trade, but nothing off-chain can force one.
 
-## Threat model
+## Threats and controls
 
-| Threat | What goes wrong | Mitigation |
+| If an attacker controls | They could try to | What stops them |
 | --- | --- | --- |
-| Stolen server secrets | Attacker drains funds | No private keys or seeds on the server. Signing only in the user's wallet. |
-| Prompt / agent runaway | Agent proposes unbounded trades | Hard caps, allowlist, daily spend, max loss, fee-aware filter, kill switch. |
-| Client tampering | User edits amounts in DevTools | All guardrail checks re-run server-side; quote route re-checks before Intents. |
-| Mainnet foot-gun | Accidental live spend on mainnet | Testnet default. Mainnet requires `NEAR_NETWORK=mainnet` **and** `ALLOW_MAINNET=true`. |
-| Arbitrary contract calls | Agent calls unexpected methods | Allowlist of contract methods is empty by design on Day 1. No generic `functionCall` API. |
-| Quote → spend confusion | Dry quote turned into deposit | Quote API is `dry: true` only. No deposit address flow in Day 1 UI. |
-| Key phishing | App asks for seed phrase | App never accepts, stores, logs, or displays private keys or seeds. |
-| Rate abuse | Flood propose/quote | Per-IP fixed-window rate limit on API routes; fail closed if IP unknown. |
-| Kill switch reset | Restart clears halt | Kill switch persisted under `data/runtime-state.json` locally, or `/tmp/intentrail/` on Vercel, with in-memory fallback. Corrupt/unreadable state fails closed (kill ON). |
+| The agent or its prompt | Propose huge or bad trades | The guard prices trades itself and won't sign outside its limits. The contract re-checks its own limits regardless. |
+| The agent's key | Withdraw, transfer, add keys, call other contracts | It's a NEAR function-call key for `execute` on the vault only. NEAR's protocol refuses everything else before it runs. |
+| The agent's key | Edit a signed quote, replay one, reuse one for another vault | The contract verifies the guard's ed25519 signature over the exact quote, checks the vault id and expiry, and records every nonce. |
+| The guard server and its key | Sign a drain | Contract caps in USD *and* raw token amounts, daily cap, token and venue allowlists, fee ceiling, and owner approval above $4. A signed $50 trade is refused on-chain. |
+| The guard server | Route output to an attacker | No trade shape has a recipient field. Wrap and unwrap return to the vault. `ft_transfer_call` venues credit the sender, which is the vault. Venues must be on the owner's allowlist. |
+| An agent's self-reported data | Mark its own trade as safe | The guard API ignores fee, stop-loss, slippage and vote claims and computes them from a live NEAR Intents quote. |
+| The vault deployer | Keep a back door | The vault's only full-access key is deleted at the end of deployment (`scripts/deploy-testnet.sh`). Anyone can list its keys on-chain. |
+| Missing live data | Price a trade on stale numbers | The guard fails closed: no live price or quote means no signature. |
+| Request floods | Burn the agent's gas budget | Per-IP rate limits, plus global cooldowns on the agent and attack routes. The agent key's allowance is capped at 0.5 NEAR, and the owner can rotate the key. |
 
-## Non-negotiables
+## The owner
 
-1. **No private keys or seed phrases** in source, logs, client bundle, env committed to git, or chat. Use `.env.example` only; real values stay in `.env.local` / host secrets.
-2. **Testnet by default.** Mainnet only behind the explicit dual flag above.
-3. **Signing** only via:
-   - the user's wallet (NEAR Wallet Selector / MyNearWallet), or
-   - a **restricted function-call access key** (trade methods only, no `transfer` / `near:transfer`, low allowance). Day 1 UI uses full wallet approval per trade; FC-key wiring is documented for Day 2.
-4. **Guardrails fail closed.** Any failed check ⇒ `BLOCK`. Checks run when proposing **and** again immediately before quote.
-5. **Human approval required by default** for every trade (`REQUIRE_HUMAN_APPROVAL=true`).
-6. **Strict input validation** with Zod: amount bounds, token allowlist, slippage cap.
-7. **No arbitrary contract calls** from the agent or API.
-8. **Kill switch persists** across process restarts.
+The owner (`intentrail-owner-39ae84.testnet` on testnet) is the human in charge. They can change the policy, flip the kill switch, approve or cancel trades held above the autonomy limit, rotate the agent key, rotate the guard key, and withdraw, but only to the owner account.
 
-## Guardrail checks (server)
+## Secrets
 
-- `KILL_SWITCH` — global halt
-- `ALLOWLIST` — only NEAR, USDC, WETH (see `src/lib/tokens.ts`)
-- `AMOUNT_BOUNDS` — `$1`–`$50` hard cap
-- `MAX_LOSS` — stop-loss sized risk ≤ policy (default `$2`)
-- `DAILY_CAP` — cumulative notional ≤ policy (default `$25`)
-- `SLIPPAGE` — ≤ policy (default `100` bps; hard max `200`)
-- `FEE_AWARE` — estimated edge must cover assumed Intents fee (~0.2% without JWT)
-- `DISTINCT_ASSETS` — from ≠ to
+`GUARD_SIGNING_KEY` and `AGENT_PRIVATE_KEY` live only in the host's encrypted environment variables. No key, seed phrase or private key is in the repository, logs or client bundle. Neither key can move funds on its own.
 
-Env vars can only **tighten** within `HARD_CAPS` in `src/lib/config.ts`, never exceed them.
+## The $1 mainnet swap
 
-## NEAR Intents notes (HACKATHON.md)
-
-- Q-006: 1Click JWT optional; without it ~0.2% fee.
-- Q-007: **No Intents testnet.** Live `dry: true` quotes only when mainnet is explicitly enabled; otherwise the quote route returns a deterministic stub so demos work safely on testnet.
+Separately from the vault, the site offers a real mainnet swap through NEAR Intents 1Click, signed in the user's own wallet. It's capped at $1 per swap and $3 per wallet per day, rate-limited, and the operator can turn it off with `MAINNET_DISABLED=true`.
 
 ## Reporting
 
-If you find a vulnerability in IntentRail, do not open a public issue with exploit details. Email the team lead listed in the submission and rotate any exposed credentials immediately.
-
-
-## Trade-only function-call keys (Day 2)
-
-- Wallet Selector requests a **FunctionCallAccessKey** for a single allowlisted contract.
-- Mainnet: `intents.near` methods `execute_intents`, `simulate_intents` only; small allowance (~0.25 NEAR).
-- Testnet: `wrap.testnet` deposit/withdraw only (Intents has no testnet — Q-007).
-- IntentRail **never** generates, stores, or logs private keys or seeds.
-- Revoke in MyNearWallet → Security / Keys.
-
-## Dry quotes vs execution
-
-- `dry: true` 1Click quotes are read-only (no deposit address).
-- Execution requires `NEAR_NETWORK=mainnet` **and** `ALLOW_MAINNET=true`, plus human approval + wallet sign.
-
-## Swarm & Agent Economy
-
-- Trend + Risk votes must both be `yes` (`SWARM_AGREE`) or the proposal is BLOCKed.
-- Premium signal fees are simulated micro-payments with per-call and daily caps; kill switch blocks purchases.
-
-
-## Mainnet $1 execution (opt-in, local only)
-
-- Requires `NEAR_NETWORK=mainnet` **and** `ALLOW_MAINNET=true`.
-- Public / Vercel demo must keep both off. IntentRail maintainers do not enable them on shared deploys.
-- Per-swap hard cap: **$1** (`HARD_CAPS.maxMainnetSwapUsd`), enforced in `requestExecutableQuote`, `/api/execute/prepare`, and the client before `Sign deposit`.
-- Flow: human approve → prepare non-dry 1Click quote → user signs `ft_transfer` to `depositAddress` in their wallet → poll `/api/execute/status`.
-- Server never holds keys, never auto-signs, never submits deposits.
-
-## Seatbelt API
-
-`POST /api/guard/check` exposes the same fail-closed engine (`src/lib/guardrails.ts`) for other agents.
-
-
-## Hosted Live mode (≤$1 on Vercel)
-
-- Visitors enable **Live mode** in the UI, select **mainnet**, connect their wallet, acknowledge risk, and confirm each swap.
-- No local env dual-flag required. Operator kill switch: `MAINNET_DISABLED=true` disables mainnet Live globally (default allowed).
-- Caps: $1/swap, $3/wallet/day, allowlist, slippage, consensus, kill switch, IP + wallet rate limits.
-- Flow: prepare non-dry 1Click quote → validate `depositAddress` + amount from 1Click → client re-checks → user signs `ft_transfer` → poll status.
-- Server never holds keys, never auto-signs, never submits deposits.
+Open an issue on https://github.com/Onegeex/intentrail, or contact the maintainer privately for anything sensitive.

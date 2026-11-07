@@ -5,9 +5,9 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 const LINKS = [
-  { href: "/", label: "Signal box" },
-  { href: "/demo", label: "Demo" },
-  { href: "/security", label: "Seatbelt API" },
+  { href: "/", label: "Overview" },
+  { href: "/security", label: "Guard API" },
+  { href: "https://github.com/Onegeex/intentrail", label: "GitHub" },
 ];
 
 function Mark() {

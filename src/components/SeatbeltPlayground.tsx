@@ -3,64 +3,47 @@
 import { useState } from "react";
 import { useToast } from "./Toast";
 
-type PresetId = "safe" | "overcap" | "badtoken";
+type PresetId = "safe" | "big" | "unlisted" | "liar";
 
-const PRESETS: Record<
-  PresetId,
-  { label: string; expect: "allowed" | "blocked"; body: Record<string, unknown> }
-> = {
-  safe: {
-    label: "Safe trade → allowed",
-    expect: "allowed",
+const PRESETS: Record<PresetId, { label: string; hint: string; body: Record<string, unknown> }> = {
+  safe: { label: "$5 USDC to NEAR", hint: "A normal trade", body: { fromSymbol: "USDC", toSymbol: "NEAR", amountUsd: 5 } },
+  big: { label: "$500 USDC to NEAR", hint: "Ten times the size limit", body: { fromSymbol: "USDC", toSymbol: "NEAR", amountUsd: 500 } },
+  unlisted: { label: "$5 USDC to DOGE", hint: "Token not on the allowlist", body: { fromSymbol: "USDC", toSymbol: "DOGE", amountUsd: 5 } },
+  liar: {
+    label: "An agent that grades itself",
+    hint: "Sends feeAwareOk, a stop-loss and yes votes",
     body: {
       fromSymbol: "USDC",
       toSymbol: "NEAR",
-      amountUsd: 5,
-      slippageBps: 50,
-      stopLossPct: 2,
+      amountUsd: 45,
       feeAwareOk: true,
+      stopLossPct: 0.1,
       votes: [
-        { agent: "trend", vote: "yes", reason: "uptrend" },
-        { agent: "risk", vote: "yes", reason: "sized" },
+        { agent: "trend", vote: "yes", reason: "trust me" },
+        { agent: "risk", vote: "yes", reason: "trust me" },
       ],
-    },
-  },
-  overcap: {
-    label: "Over-cap → blocked",
-    expect: "blocked",
-    body: {
-      fromSymbol: "USDC",
-      toSymbol: "NEAR",
-      amountUsd: 500,
-      slippageBps: 50,
-      feeAwareOk: true,
-    },
-  },
-  badtoken: {
-    label: "Bad token → blocked",
-    expect: "blocked",
-    body: {
-      fromSymbol: "USDC",
-      toSymbol: "DOGE",
-      amountUsd: 5,
     },
   },
 };
 
-const CURL = `curl -sS -X POST https://intentrail-neon.vercel.app/api/guard/check \\
-  -H 'Content-Type: application/json' \\
-  -d '{"fromSymbol":"USDC","toSymbol":"NEAR","amountUsd":5,"slippageBps":50,"stopLossPct":2,"feeAwareOk":true,"votes":[{"agent":"trend","vote":"yes","reason":"uptrend"},{"agent":"risk","vote":"yes","reason":"sized"}]}'`;
+type Result = {
+  allowed?: boolean;
+  decision?: string;
+  reason?: string;
+  checks?: { code: string; ok: boolean; detail: string }[];
+  computed?: { costBps: number | null; worstCaseLossUsd: number | null; quoteSource: string };
+  ignoredFields?: string[];
+  error?: string;
+};
 
 export function SeatbeltPlayground() {
   const { push } = useToast();
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<PresetId | null>(null);
   const [active, setActive] = useState<PresetId | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
 
   async function run(id: PresetId) {
-    setBusy(true);
-    setErr(null);
+    setBusy(id);
     setActive(id);
     setResult(null);
     try {
@@ -69,132 +52,71 @@ export function SeatbeltPlayground() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(PRESETS[id].body),
       });
-      const data = await res.json();
-      if (!res.ok && !data.decision) {
-        setErr(data.error || `HTTP ${res.status}`);
-        push(data.error || "Seatbelt request failed", "err");
-        return;
-      }
+      const data = (await res.json()) as Result;
       setResult(data);
-      const allowed = Boolean(data.allowed ?? data.decision === "PASS");
-      push(
-        allowed ? "Seatbelt: ALLOWED" : `Seatbelt: BLOCKED — ${String(data.reason || "").slice(0, 80)}`,
-        allowed ? "ok" : "err",
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Network error";
-      setErr(msg);
-      push(msg, "err");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function copyCurl() {
-    try {
-      await navigator.clipboard.writeText(CURL);
-      push("curl copied", "ok");
+      if (!data.decision) push(data.error || "The guard couldn't check that trade.", "err");
     } catch {
-      push("Could not copy — select the curl below", "info");
+      push("Couldn't reach the guard. Check your connection and try again.", "err");
+    } finally {
+      setBusy(null);
     }
   }
-
-  const allowed = result
-    ? Boolean(result.allowed ?? result.decision === "PASS")
-    : null;
 
   return (
-    <section className="rounded-2xl border border-violet-900/50 bg-violet-950/20 p-4 sm:p-5 space-y-4 overflow-hidden">
+    <section className="space-y-5 rounded-[24px] border border-rule bg-panel-raised p-5 sm:p-7">
       <div>
-        <h2 className="text-base font-semibold text-white">Try the seatbelt API</h2>
-        <p className="mt-1 text-sm text-zinc-400">
-          Same fail-closed engine other agents call via{" "}
-          <code className="text-violet-300">POST /api/guard/check</code>. Pick a preset —
-          no wallet needed.
+        <h2 className="font-display text-3xl font-black tracking-wide text-ivory">Try the guard</h2>
+        <p className="mt-1 text-sm text-ivory-dim">
+          Each button sends a real request to <code className="font-mono text-ivory">POST /api/guard/check</code>.
         </p>
       </div>
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+      <div className="grid gap-3 sm:grid-cols-2">
         {(Object.keys(PRESETS) as PresetId[]).map((id) => (
           <button
             key={id}
             type="button"
-            disabled={busy}
+            disabled={busy !== null}
             onClick={() => void run(id)}
-            className={`min-h-11 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50 ${
-              active === id
-                ? "bg-violet-500 text-white"
-                : "bg-zinc-900 border border-zinc-700 text-zinc-100 hover:bg-zinc-800"
+            className={`min-h-16 rounded-2xl border px-4 py-3 text-left disabled:opacity-60 ${
+              active === id ? "border-ivory bg-panel" : "border-rule bg-panel hover:border-ivory-dim"
             }`}
           >
-            {busy && active === id ? "Checking…" : PRESETS[id].label}
+            <span className="block font-display text-2xl font-extrabold tracking-wide text-ivory">
+              {busy === id ? "Checking…" : PRESETS[id].label}
+            </span>
+            <span className="block text-sm text-ivory-dim">{PRESETS[id].hint}</span>
           </button>
         ))}
       </div>
 
-      {busy && !result && !err && (
-        <p className="text-sm text-zinc-400 animate-pulse">Calling seatbelt…</p>
-      )}
-      {err && (
-        <p className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-sm text-red-200">
-          {err}
-        </p>
-      )}
-      {result && (
-        <div className="space-y-2">
-          <p
-            className={`text-sm font-semibold ${allowed ? "text-emerald-300" : "text-red-300"}`}
-          >
-            {allowed ? "ALLOWED" : "BLOCKED"}
-            {typeof result.decision === "string" ? ` (${result.decision})` : ""}
+      {result?.decision && (
+        <div className="space-y-3" aria-live="polite">
+          <p className={`font-display text-3xl font-black tracking-wide ${result.allowed ? "text-proceed" : "text-danger"}`}>
+            {result.allowed ? "Allowed" : "Blocked"}
           </p>
-          <p className="text-xs text-zinc-400 break-words">{String(result.reason || "")}</p>
-          <div className="overflow-x-auto -mx-1 px-1">
-            <table className="min-w-full text-left text-xs font-mono">
-              <thead>
-                <tr className="text-zinc-500">
-                  <th className="py-1 pr-3">check</th>
-                  <th className="py-1 pr-3">ok</th>
-                  <th className="py-1">detail</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Array.isArray(result.checks) &&
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  (result.checks as any[]).map((c) => (
-                    <tr key={c.code} className="border-t border-zinc-800">
-                      <td className="py-1.5 pr-3 text-zinc-300 whitespace-nowrap">{c.code}</td>
-                      <td className={`py-1.5 pr-3 ${c.ok ? "text-emerald-400" : "text-red-400"}`}>
-                        {c.ok ? "yes" : "no"}
-                      </td>
-                      <td className="py-1.5 text-zinc-400 max-w-[14rem] sm:max-w-md truncate">
-                        {c.detail}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          {result.ignoredFields && result.ignoredFields.length > 0 && (
+            <p className="rounded-xl border border-caution/40 bg-caution/10 px-3 py-2 text-sm text-ivory">
+              Ignored what the agent said about itself: <span className="font-mono">{result.ignoredFields.join(", ")}</span>. The
+              guard computed those numbers from live data instead.
+            </p>
+          )}
+          <ul className="divide-y divide-rule/60 text-sm">
+            {result.checks?.map((c) => (
+              <li key={c.code} className="grid grid-cols-[14px_1fr] gap-3 py-2">
+                <span className={`mt-1.5 h-2.5 w-2.5 rounded-full ${c.ok ? "bg-proceed" : "bg-danger"}`} />
+                <span className={c.ok ? "text-ivory" : "text-danger"}>{c.detail}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
-      {!busy && !result && !err && (
-        <p className="text-sm text-zinc-500">No result yet — tap a preset above.</p>
-      )}
+      {result && !result.decision && <p className="text-sm text-caution">{result.error}</p>}
 
-      <div className="space-y-2 border-t border-violet-900/40 pt-3">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-zinc-300">Copy-paste curl</p>
-          <button
-            type="button"
-            onClick={() => void copyCurl()}
-            className="min-h-10 rounded-lg border border-zinc-700 px-3 text-xs text-zinc-200 hover:bg-zinc-900"
-          >
-            Copy
-          </button>
-        </div>
-        <pre className="overflow-x-auto rounded-xl bg-black/60 border border-zinc-800 p-3 text-[10px] sm:text-[11px] leading-relaxed text-zinc-300 font-mono whitespace-pre">
-          {CURL}
-        </pre>
-      </div>
+      <pre className="overflow-x-auto rounded-xl border border-rule bg-panel-deep p-3 font-mono text-[11px] text-ivory">
+        {`curl -sS -X POST https://intentrail-neon.vercel.app/api/guard/check \\
+  -H 'Content-Type: application/json' \\
+  -d '{"fromSymbol":"USDC","toSymbol":"NEAR","amountUsd":5}'`}
+      </pre>
     </section>
   );
 }
