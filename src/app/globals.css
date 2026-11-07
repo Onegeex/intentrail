@@ -1,28 +1,109 @@
 @import "tailwindcss";
 
+/*
+ * IntentRail — signal-box theme.
+ * The palette is an enamel interlocking panel: slate-teal ground, ivory track
+ * paint, and three lamp colours that only ever mean one thing each:
+ *   proceed (green) · danger (red) · caution (amber).
+ * The Tailwind zinc/violet/emerald/red/amber/sky scales are remapped so the
+ * existing control panels inherit the panel palette without rewriting them.
+ */
+@theme {
+  --font-sans: "Overpass Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Overpass Mono Variable", ui-monospace, monospace;
+  --font-display: "Big Shoulders Display", "Overpass Variable", sans-serif;
+
+  --color-panel: #142326;
+  --color-panel-raised: #1b2e32;
+  --color-panel-deep: #0d191b;
+  --color-rule: #34494d;
+  --color-ivory: #ece6d3;
+  --color-ivory-dim: #a9ad9f;
+  --color-proceed: #4be38d;
+  --color-danger: #ff4d3f;
+  --color-caution: #f6b93f;
+  --color-points: #79b8d9;
+
+  --color-zinc-50: #f7f4ea;
+  --color-zinc-100: #ece6d3;
+  --color-zinc-200: #dcd7c5;
+  --color-zinc-300: #c2c2b3;
+  --color-zinc-400: #9aa7a1;
+  --color-zinc-500: #758783;
+  --color-zinc-600: #576b68;
+  --color-zinc-700: #3d5357;
+  --color-zinc-800: #2b3f43;
+  --color-zinc-900: #1b2e32;
+  --color-zinc-950: #112023;
+
+  --color-violet-200: #d6ebf5;
+  --color-violet-300: #a9d3e8;
+  --color-violet-400: #8cc4e1;
+  --color-violet-500: #3f7f9f;
+  --color-violet-900: #244451;
+  --color-violet-950: #142f38;
+
+  --color-sky-400: #8cc4e1;
+  --color-sky-500: #4b8fb0;
+  --color-sky-600: #3f7f9f;
+  --color-sky-900: #244451;
+  --color-sky-950: #142f38;
+
+  --color-emerald-300: #8ff0b6;
+  --color-emerald-400: #4be38d;
+  --color-emerald-500: #38c777;
+  --color-emerald-700: #1f7a49;
+  --color-emerald-800: #1a5e3a;
+  --color-emerald-900: #13442b;
+  --color-emerald-950: #0c2a1b;
+
+  --color-red-100: #ffe1dd;
+  --color-red-200: #ffc0b8;
+  --color-red-300: #ff8f84;
+  --color-red-400: #ff6a5d;
+  --color-red-500: #ff4d3f;
+  --color-red-800: #8f2a22;
+  --color-red-900: #5e1d18;
+  --color-red-950: #2e0f0c;
+  --color-rose-400: #ff6a5d;
+
+  --color-amber-100: #fdecc4;
+  --color-amber-300: #f9cf76;
+  --color-amber-400: #f6b93f;
+  --color-amber-500: #e0a22a;
+  --color-amber-700: #8a6418;
+  --color-amber-900: #4f3a10;
+  --color-amber-950: #2a1f09;
+}
+
 :root {
-  --background: #07090f;
-  --foreground: #e8eaef;
+  color-scheme: dark;
 }
 
 html {
   overflow-x: hidden;
+  background: var(--color-panel-deep);
 }
 
 body {
-  background: radial-gradient(1200px 600px at 10% -10%, #1a2744 0%, transparent 50%),
-    radial-gradient(900px 500px at 100% 0%, #2a1540 0%, transparent 45%),
-    var(--background);
-  color: var(--foreground);
+  background-color: var(--color-panel);
+  /* Faint enamel grain: two offset dot grids, no gradients. */
+  background-image:
+    radial-gradient(rgba(236, 230, 211, 0.035) 1px, transparent 1px),
+    radial-gradient(rgba(0, 0, 0, 0.18) 1px, transparent 1px);
+  background-size: 22px 22px, 22px 22px;
+  background-position: 0 0, 11px 11px;
+  color: var(--color-ivory);
   min-height: 100vh;
   overflow-x: hidden;
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1;
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* Tap-friendly controls */
 button,
 a,
 input,
@@ -31,9 +112,34 @@ textarea {
   touch-action: manipulation;
 }
 
-/* Tables: allow horizontal scroll without page overflow */
+:focus-visible {
+  outline: 2px solid var(--color-caution);
+  outline-offset: 3px;
+}
+
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   max-width: 100%;
+}
+
+/* Inputs inside the control room read as panel switches, not web forms. */
+select,
+input[type="number"],
+input[type="text"] {
+  background-color: var(--color-panel-deep);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--color-proceed);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
