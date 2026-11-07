@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { enforceRateLimit } from "@/lib/api";
-import { isVaultConfigured } from "@/lib/vault";
+import { LOW_BUDGET_NEAR, agentBudgetNear, getVaultSnapshot, isVaultConfigured } from "@/lib/vault";
 import { runAgentTrade } from "@/lib/vault-agent";
 
 export const runtime = "nodejs";
@@ -18,6 +18,13 @@ export async function POST(req: Request) {
   const wait = 12_000 - (Date.now() - lastAt);
   if (wait > 0) {
     return NextResponse.json({ ok: false, error: `The agent just traded. Try again in ${Math.ceil(wait / 1000)} seconds.` }, { status: 429 });
+  }
+  const snap = await getVaultSnapshot().catch(() => null);
+  if (snap && agentBudgetNear(snap) < LOW_BUDGET_NEAR) {
+    return NextResponse.json(
+      { ok: false, lowBudget: true, error: "The agent's gas budget is nearly used up, so live runs are paused until the owner refreshes it. The recorded run below is real." },
+      { status: 503 },
+    );
   }
   lastAt = Date.now();
   const body = bodySchema.safeParse(await req.json().catch(() => ({})));

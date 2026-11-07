@@ -41,6 +41,14 @@ export function rpc() {
   return provider;
 }
 
+/** The agent key's remaining gas budget, in NEAR. */
+export function agentBudgetNear(snap: VaultSnapshot): number {
+  const k = snap.keys.find((x) => !x.fullAccess);
+  if (!k?.allowanceYocto) return 0;
+  return Number(BigInt(k.allowanceYocto) / BigInt(1e18)) / 1e6;
+}
+export const LOW_BUDGET_NEAR = 0.1;
+
 export function isVaultConfigured() {
   return Boolean(process.env.GUARD_SIGNING_KEY && process.env.AGENT_PRIVATE_KEY);
 }
@@ -59,6 +67,7 @@ export type VaultPolicy = {
   approval_above_usd_cents: string;
   max_cost_bps: number;
   price_floors?: { token_in: string; token_out: string; min_out_per_in_e6: string }[];
+  exit_tokens?: string[];
 };
 
 export type VaultEvent = {
@@ -83,6 +92,8 @@ export type VaultSnapshot = {
   keys: Array<{ publicKey: string; fullAccess: boolean; methods: string[]; receiver: string | null; allowanceYocto: string | null }>;
   balances: { nearYocto: string; wnearYocto: string; usdtRaw: string };
   pendingPolicy: { eta_ms: string; policy: VaultPolicy } | null;
+  pendingWithdrawals: { id: string; token: string; amount: string; eta_ms: string }[];
+  guardianId: string | null;
   timelockMs: number;
   asOf: string;
 };
@@ -94,7 +105,7 @@ async function view<T>(method: string, args: Record<string, unknown> = {}, contr
 
 export async function getVaultSnapshot(): Promise<VaultSnapshot> {
   const p = rpc();
-  const [policy, stats, spent, events, pending, keyList, account, wnear, usdt, pendingPolicy, timelock] = await Promise.all([
+  const [policy, stats, spent, events, pending, keyList, account, wnear, usdt, pendingPolicy, timelock, withdrawals, guardian] = await Promise.all([
     view<VaultPolicy>("get_policy"),
     view<VaultSnapshot["stats"]>("get_stats"),
     view<string>("get_spent_today"),
@@ -106,6 +117,8 @@ export async function getVaultSnapshot(): Promise<VaultSnapshot> {
     view<string>("ft_balance_of", { account_id: VAULT_ID }, USDT_ID).catch(() => "0"),
     view<VaultSnapshot["pendingPolicy"]>("get_pending_policy").catch(() => null),
     view<string>("get_timelock_ms").catch(() => "0"),
+    view<VaultSnapshot["pendingWithdrawals"]>("get_pending_withdrawals").catch(() => []),
+    view<string>("get_guardian").catch(() => null),
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -133,6 +146,8 @@ export async function getVaultSnapshot(): Promise<VaultSnapshot> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     balances: { nearYocto: String((account as any)?.amount ?? "0"), wnearYocto: String(wnear ?? "0"), usdtRaw: String(usdt ?? "0") },
     pendingPolicy: pendingPolicy ?? null,
+    pendingWithdrawals: withdrawals ?? [],
+    guardianId: guardian ?? null,
     timelockMs: Number(timelock ?? 0),
     asOf: new Date().toISOString(),
   };

@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "vault:deploy": "bash scripts/deploy-testnet.sh",
+    "vault:test": "cd contract && cargo test"
   },
   "dependencies": {
     "@fontsource-variable/overpass": "^5.3.0",
@@ -38,5 +40,5 @@
     "postcss": "^8.5.6",
     "base-x": "^5.0.0"
   },
-  "description": "IntentRail — AI trading agent with hard guardrails on NEAR Intents"
+  "description": "IntentRail \u2014 AI trading agent with hard guardrails on NEAR Intents"
 }

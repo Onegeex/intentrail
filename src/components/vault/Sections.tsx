@@ -1,4 +1,4 @@
-import drill from "@/data/drill.json";
+import drills from "@/data/drills.json";
 import { CONTRACT_SRC, CONTRACT_TESTS, EXPLORER, REPO } from "./format";
 
 export function SectionHead({ title, lede }: { title: string; lede?: React.ReactNode }) {
@@ -33,7 +33,9 @@ const STEPS = [
   },
 ];
 
-export function HowItWorks() {
+export type WorstCase = { perTradeUsd: number; perDayUsd: number; worstGapPct: number; autonomousMaxUsd: number; dailyCapUsd: number } | null;
+
+export function HowItWorks({ worstCase }: { worstCase: WorstCase }) {
   return (
     <section className="space-y-10">
       <SectionHead
@@ -54,6 +56,15 @@ export function HowItWorks() {
       </ol>
 
       <div className="overflow-x-auto">
+        {worstCase && (
+          <p className="mb-6 max-w-3xl rounded-2xl border border-caution/40 bg-caution/10 p-4 text-ivory">
+            <span className="font-semibold">Worst case if our guard server is hacked:</span> it can sign trades right at the
+            owner&apos;s price floor, {worstCase.worstGapPct}% under today&apos;s pool price, up to ${worstCase.autonomousMaxUsd} a
+            trade without the owner. That&apos;s about <span className="font-semibold">${worstCase.perTradeUsd.toFixed(2)} a trade and $
+            {worstCase.perDayUsd.toFixed(2)} a day</span> on a ${worstCase.dailyCapUsd} daily cap, until the owner or guardian pauses.
+            Tighter floors or a lower cap shrink it.
+          </p>
+        )}
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead>
             <tr className="text-ivory-dim">
@@ -71,19 +82,27 @@ export function HowItWorks() {
               ],
               [
                 "The agent's key",
-                "Send execute() calls and spend its 0.5 NEAR gas budget. Without a guard signature they all fail.",
+                "Send execute() calls and spend its gas budget. Without a guard signature they all fail.",
                 "Transfer, add keys, delete the account, or call another contract. NEAR's protocol refuses.",
               ],
               [
                 "The guard server and its key",
-                "Sign bad quotes until the owner notices",
-                "Sell below the owner's price floor, exceed any cap, add a venue, or skip owner approval. Once the owner rotates the key, its quotes are worthless.",
+                worstCase
+                  ? `Sign bad-but-allowed trades until someone notices: at most about $${worstCase.perTradeUsd.toFixed(2)} a trade and $${worstCase.perDayUsd.toFixed(2)} a day at today's pool prices`
+                  : "Sign bad-but-allowed trades until someone notices, down to the owner's price floor",
+                "Sell below the owner's floor, exceed any cap, add a venue, or skip owner approval. Once the owner rotates the key, its quotes are worthless.",
               ],
               ["Anyone else", "Read the vault", "Call execute(), even with a genuine signed quote. Only the agent key or the owner may."],
               [
-                "The owner's key",
-                "Tighten limits and pause at once; withdraw to itself",
-                "Loosen any limit or resume trading without waiting out the timelock (10 minutes on testnet)",
+                "The owner's key alone",
+                "Queue a withdrawal to the owner account, which the attacker now controls. Queue looser limits. Swap into the stablecoin at once, at a bad price if it wants, but the funds stay in the vault.",
+                "Take anything out before the timelock (10 minutes on testnet; a day on mainnet), or stop the guardian vetoing it",
+              ],
+              ["The guardian's key alone", "Pause trading, veto queued withdrawals and changes", "Move funds, resume trading, or loosen anything"],
+              [
+                "Owner and guardian together",
+                "Drain the vault after the timelock. This is the trust root.",
+                "Nothing. On mainnet both should be multisig accounts held by different people.",
               ],
             ].map(([who, can, cant]) => (
               <tr key={who}>
@@ -125,18 +144,33 @@ export function WhyNear() {
           </div>
         ))}
       </div>
-      <div className="max-w-3xl space-y-3 rounded-[24px] border border-rule bg-panel-deep p-5 text-sm leading-relaxed text-ivory-dim sm:p-7">
-        <h3 className="font-display text-2xl font-extrabold tracking-wide text-ivory">Next: NEAR Intents on mainnet</h3>
-        <p>
-          The vault trades on Ref Finance on testnet today. NEAR Intents is the mainnet goal, and it isn&apos;t a config
-          change. A vault holding funds in <span className="font-mono text-ivory">intents.near</span> needs someone to sign
-          intents for it, and a contract can&apos;t sign on its own.
+      <div className="space-y-5 rounded-[24px] border border-rule bg-panel-deep p-5 sm:p-7">
+        <h3 className="font-display text-3xl font-black tracking-wide text-ivory">Mainnet: the contract signs intents through chain signatures</h3>
+        <p className="max-w-3xl text-sm leading-relaxed text-ivory-dim">
+          On testnet the vault trades on Ref Finance and the guard prices every trade on that same pool. For NEAR Intents
+          on mainnet, funds held in <span className="font-mono text-ivory">intents.near</span> move only with a signed
+          intent. A key that a server or a person holds would bypass every check above. So the vault won&apos;t hold one.
+          The contract checks the intent, then asks NEAR&apos;s chain-signatures MPC network to sign it. No hot key exists
+          anywhere.
         </p>
-        <p>
-          Our plan: the vault registers a dedicated signing key with intents.near. That key signs only the swap intents the
-          vault&apos;s contract has already approved, and withdrawals out of intents.near go back through the vault. That
-          adds one trust assumption, that this key signs only approved intents, so we&apos;ll state it plainly when we ship it.
-          Until then, the separate $1 mainnet swap uses 1Click from your own wallet, outside the vault.
+        <ol className="grid gap-px overflow-hidden rounded-2xl border border-rule bg-rule text-sm md:grid-cols-5">
+          {[
+            ["Agent", "Proposes a swap"],
+            ["Guard", "Prices it on a live 1Click quote and signs the quote"],
+            ["Vault contract", "Runs every check above on the exact intent"],
+            ["Chain signatures", "MPC signs that intent for the vault's derived key on intents.near"],
+            ["intents.near", "Solver fills it; balances stay under the vault's key"],
+          ].map(([who, what], i) => (
+            <li key={who} className="space-y-1 bg-panel p-4">
+              <span className="font-display text-2xl font-black text-caution">{i + 1}</span>
+              <p className="font-semibold text-ivory">{who}</p>
+              <p className="text-ivory-dim">{what}</p>
+            </li>
+          ))}
+        </ol>
+        <p className="max-w-3xl text-sm text-ivory-dim">
+          Status, plainly: this is the design, not shipped code. Today the vault has never touched intents.near. The
+          separate $1 swap on the mainnet page uses 1Click from your own wallet, outside the vault.
         </p>
       </div>
     </section>
@@ -173,6 +207,16 @@ const TESTS = [
   "Agent can't withdraw",
   "Agent can't change limits",
   "Agent can't replace its own key",
+  "Withdrawals wait for the timelock",
+  "A withdrawal can't skip the timelock",
+  "Stolen owner key: the guardian vetoes the drain",
+  "Guardian can't withdraw",
+  "Guardian can't resume trading",
+  "Guardian can veto a loosening change",
+  "Owner can exit to the stablecoin in a crash",
+  "Exit only into an exit token",
+  "Agent can't use the crash exit",
+  "Agent gas budget is capped",
 ];
 
 export function Evidence() {
@@ -208,18 +252,21 @@ export function Evidence() {
   );
 }
 
-export function KeyLeakDrill() {
+type Drill = (typeof drills)["guard"];
+
+function DrillCard({ d }: { d: Drill }) {
   return (
     <div className="space-y-4 rounded-[24px] border border-rule bg-panel-raised p-5 sm:p-7">
       <div className="space-y-1">
-        <h3 className="font-display text-3xl font-black tracking-wide text-ivory">If the guard key leaks</h3>
+        <h3 className="font-display text-3xl font-black tracking-wide text-ivory">{d.title}</h3>
         <p className="text-sm text-ivory-dim">
-          The owner&apos;s response, run for real on <span className="font-mono">{drill.vault}</span>. Pausing and rotating
-          are instant. Turning trading back on waits out the timelock, even for the owner.
+          {d.lede.split("{vault}")[0]}
+          <span className="font-mono">{d.vault}</span>
+          {d.lede.split("{vault}")[1]}
         </p>
       </div>
       <ol className="divide-y divide-rule/60">
-        {drill.steps.map((s, i) => (
+        {d.steps.map((s, i) => (
           <li key={s.tx} className="grid gap-1 py-3 sm:grid-cols-[2rem_1fr_auto] sm:items-baseline sm:gap-4">
             <span className="font-display text-2xl font-black text-caution">{i + 1}</span>
             <div>
@@ -238,6 +285,15 @@ export function KeyLeakDrill() {
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+export function KeyDrills() {
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      <DrillCard d={drills.owner as Drill} />
+      <DrillCard d={drills.guard} />
     </div>
   );
 }

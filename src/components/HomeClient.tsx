@@ -6,7 +6,8 @@ import { useCallback, useMemo, useState } from "react";
 import { HeroScene, type HeroEvent } from "@/components/rail/HeroScene";
 import { LiveProvider, useLive } from "@/components/rail/LiveContext";
 import { useToast } from "@/components/Toast";
-import { AgentChat } from "@/components/vault/AgentChat";
+import { AgentChat, type RecordedLlm } from "@/components/vault/AgentChat";
+import type { WorstCase } from "@/components/vault/Sections";
 import { AttackDemo, type AttackRun } from "@/components/vault/AttackDemo";
 import { CONTRACT_SRC, REPO } from "@/components/vault/format";
 import { VaultPanel } from "@/components/vault/VaultPanel";
@@ -24,7 +25,7 @@ const res = await fetch("${SITE}/api/guard/check", {
 const { allowed, checks, computed, ignoredFields } = await res.json();
 // computed.costBps comes from a live NEAR Intents quote, not from your agent.`;
 
-function Hero({ stats }: { stats: VaultSnapshot["stats"] | null }) {
+function Hero({ stats, held }: { stats: VaultSnapshot["stats"] | null; held: number }) {
   const reduce = useReducedMotion();
   const { data } = useLive();
   const [event, setEvent] = useState<HeroEvent | null>(null);
@@ -104,6 +105,11 @@ function Hero({ stats }: { stats: VaultSnapshot["stats"] | null }) {
                   <span className="font-mono text-lg text-proceed">{stats.executed}</span> trades executed,{" "}
                   <span className="font-mono text-lg text-danger">{stats.rejected}</span> refused
                 </p>
+                {held > 0 && (
+                  <a href="#vault" className="mt-2 inline-flex rounded-full bg-caution px-3 py-1 text-xs font-semibold text-panel-deep">
+                    {held} trade{held > 1 ? "s" : ""} waiting for the owner
+                  </a>
+                )}
               </div>
             )}
             <div className="mt-3 min-h-[4.5rem]" aria-live="polite">
@@ -148,6 +154,10 @@ function ApiSection() {
           live NEAR Intents 1Click quote and returns every check with its numbers.
         </p>
         <p>
+          This API prices on NEAR Intents 1Click because that&apos;s where other agents&apos; trades settle on mainnet. The
+          vault itself prices every trade on the pool it actually trades on.
+        </p>
+        <p>
           It ignores anything an agent says about itself, such as its fees, stop-loss or votes, and lists those fields
           under <code className="font-mono text-ivory">ignoredFields</code>. Limits that need memory, like the daily cap,
           live in the vault contract.
@@ -182,6 +192,8 @@ function ApiSection() {
 
 export function HomeClient({
   vault,
+  worstCase,
+  recordedLlm,
   ownerId,
   recordedAttack,
   howItWorks,
@@ -190,6 +202,8 @@ export function HomeClient({
   llmConfigured,
 }: {
   vault: VaultSnapshot | null;
+  worstCase: WorstCase;
+  recordedLlm: RecordedLlm;
   ownerId: string;
   recordedAttack: AttackRun;
   howItWorks: React.ReactNode;
@@ -199,7 +213,7 @@ export function HomeClient({
 }) {
   return (
     <LiveProvider>
-      <Hero stats={vault?.stats ?? null} />
+      <Hero stats={vault?.stats ?? null} held={vault?.pending.length ?? 0} />
       <main className="mx-auto max-w-6xl space-y-24 px-4 pb-16 pt-16 sm:space-y-32 sm:px-6 sm:pt-24 overflow-x-hidden">
         <Section
           id="attack"
@@ -219,7 +233,7 @@ export function HomeClient({
           title="Hijack the agent yourself."
           lede="A real language model, running on NEAR AI Cloud, holds the vault's agent key. It can request trades, and it can sign any transaction it likes. Try to talk it into draining the vault."
         >
-          <AgentChat configured={llmConfigured} />
+          <AgentChat configured={llmConfigured} recorded={recordedLlm} />
         </Section>
 
         <Section
@@ -227,7 +241,7 @@ export function HomeClient({
           title="The vault, live"
           lede="Everything on this panel is read from the chain. Make the agent swap and watch the contract decide."
         >
-          <VaultPanel initial={vault} ownerId={ownerId} />
+          <VaultPanel initial={vault} ownerId={ownerId} worstCase={worstCase} />
         </Section>
 
         {whyNear}
@@ -248,7 +262,7 @@ export function HomeClient({
             <a className="text-ivory hover:underline" href={CONTRACT_SRC}>
               Contract
             </a>
-            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vault?.vaultId ?? "intentrail-vault3-39ae84.testnet"}`}>
+            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vault?.vaultId ?? "intentrail-vault4-39ae84.testnet"}`}>
               Vault on NearBlocks
             </a>
             <Link className="text-ivory hover:underline" href="/mainnet">

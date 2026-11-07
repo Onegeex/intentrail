@@ -3,6 +3,7 @@
 import { motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 import type { VaultSnapshot } from "@/lib/vault";
+import type { WorstCase } from "./Sections";
 import { CHECK_LABEL, EXPLORER, STATUS_LABEL, centsToUsd, shortKey, timeAgo, yoctoToNear } from "./format";
 
 type RunResult = {
@@ -26,7 +27,7 @@ const STATUS_TONE: Record<string, string> = {
   Cancelled: "text-ivory-dim",
 };
 
-export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null; ownerId: string }) {
+export function VaultPanel({ initial, ownerId, worstCase }: { initial: VaultSnapshot | null; ownerId: string; worstCase: WorstCase }) {
   const [snap, setSnap] = useState<VaultSnapshot | null>(initial);
   const [busy, setBusy] = useState<"small" | "large" | null>(null);
   const [last, setLast] = useState<RunResult | null>(null);
@@ -83,6 +84,8 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
   const pct = cap ? Math.min(100, (snap.spentTodayCents / cap) * 100) : 0;
   const agentKey = snap.keys.find((k) => !k.fullAccess);
   const fullKeys = snap.keys.filter((k) => k.fullAccess).length;
+  const budget = agentKey?.allowanceYocto ? Number(BigInt(agentKey.allowanceYocto) / BigInt(1e18)) / 1e6 : 0;
+  const lowBudget = budget < 0.1;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
@@ -157,10 +160,20 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
             <li className="flex gap-3">
               <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-points" />
               <span className="text-ivory">
-                Owner <span className="font-mono text-ivory-dim">{ownerId}</span> can change limits, approve big trades, and
-                withdraw, but only to itself.
+                Owner <span className="font-mono text-ivory-dim">{ownerId}</span> approves big trades and can tighten limits at
+                once. Withdrawals and looser limits wait {Math.round(snap.timelockMs / 60_000)} minutes. Anyone holding this key
+                could queue a withdrawal to itself.
               </span>
             </li>
+            {snap.guardianId && (
+              <li className="flex gap-3">
+                <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-points" />
+                <span className="text-ivory">
+                  Guardian <span className="font-mono text-ivory-dim">{snap.guardianId}</span> can pause and veto anything queued.
+                  It can&apos;t move funds.
+                </span>
+              </li>
+            )}
           </ul>
         </div>
 
@@ -175,6 +188,12 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
               ["Per day", `Up to ${centsToUsd(p.daily_cap_usd_cents)}`],
               ["Agent alone", `Up to ${centsToUsd(p.approval_above_usd_cents)} per trade. Above that, the owner decides.`],
               ["Fees and price impact", `Up to ${p.max_cost_bps} bps`],
+              ...(worstCase
+                ? [["If the guard is hacked", `At most about $${worstCase.perDayUsd.toFixed(2)} a day at today's pool prices, until someone pauses`]]
+                : []),
+              ...((p.exit_tokens ?? []).length
+                ? [["Crash exit", `The owner can always swap into ${(p.exit_tokens ?? []).map((t) => t.split(".")[0]).join(", ")} at once. Funds stay in the vault.`]]
+                : []),
               ...(p.price_floors ?? []).map((f) => [
                 `Floor ${f.token_in.split(".")[0]} to ${f.token_out.split(".")[0]}`,
                 `At least ${(Number(f.min_out_per_in_e6) / 1e6).toFixed(2)} per unit in, checked by the contract itself`,
@@ -205,7 +224,7 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
             <motion.button
               type="button"
               whileTap={{ scale: 0.97 }}
-              disabled={busy !== null}
+              disabled={busy !== null || lowBudget}
               onClick={() => void run("small")}
               className="min-h-16 rounded-2xl bg-ivory px-4 py-3 text-left text-panel-deep disabled:opacity-60"
             >
@@ -217,7 +236,7 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
             <motion.button
               type="button"
               whileTap={{ scale: 0.97 }}
-              disabled={busy !== null}
+              disabled={busy !== null || lowBudget}
               onClick={() => void run("large")}
               className="min-h-16 rounded-2xl border border-rule bg-panel px-4 py-3 text-left text-ivory disabled:opacity-60"
             >
@@ -257,6 +276,18 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
                 </a>
               )}
             </motion.div>
+          )}
+          {snap.pendingWithdrawals.length > 0 && (
+            <div className="rounded-2xl border border-danger/40 bg-danger/10 p-4 text-sm text-ivory">
+              <p className="font-semibold">A withdrawal is waiting out the timelock</p>
+              <p className="mt-1 text-ivory-dim">The guardian can veto it before it can go through.</p>
+            </div>
+          )}
+          {lowBudget && (
+            <p className="rounded-2xl border border-caution/40 bg-caution/10 p-4 text-sm text-ivory">
+              The agent&apos;s gas budget is nearly used up ({budget.toFixed(3)} NEAR left), so live trades are paused until
+              the owner refreshes it.
+            </p>
           )}
           {snap.pendingPolicy && (
             <div className="rounded-2xl border border-rule bg-panel-deep p-4 text-sm text-ivory">

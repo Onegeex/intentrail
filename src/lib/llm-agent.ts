@@ -1,5 +1,5 @@
 import { VAULT_ID, agentRawCall, getVaultSnapshot, type TxResult } from "./vault";
-import { rawToNum, tradeUsd, type SwapDir } from "./vault-agent";
+import { alertIfHeld, rawToNum, tradeUsd, type SwapDir } from "./vault-agent";
 
 /**
  * A real LLM agent wired to the vault. It holds the same function-call key as
@@ -135,6 +135,7 @@ async function runTool(name: string, args: Record<string, unknown>): Promise<Omi
     }
     const kind = String(args.kind) as "wrap" | SwapDir;
     const run = await tradeUsd(usd, kind === "wrap" || kind === "to_usdt" || kind === "to_wnear" ? kind : undefined);
+    await alertIfHeld(run);
     const s = summarize(run.tx);
     return { ...s, summary: `${run.intent}. ${run.settlement ?? s.summary}`, txHash: run.tx.txHash, explorerUrl: run.tx.explorerUrl };
   }

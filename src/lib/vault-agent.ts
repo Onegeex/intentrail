@@ -1,3 +1,4 @@
+import { notifyOwner } from "./notify";
 import { fetchPrices } from "./prices";
 import {
   GAS,
@@ -176,7 +177,53 @@ export async function tradeUsd(usd: number, prefer?: "wrap" | SwapDir): Promise<
 }
 
 export async function runAgentTrade(size: "small" | "large"): Promise<AgentRun> {
-  return tradeUsd(size === "small" ? 1.5 : 6);
+  const run = await tradeUsd(size === "small" ? 1.5 : 6);
+  await alertIfHeld(run);
+  return run;
+}
+
+export async function alertIfHeld(run: AgentRun) {
+  if (run.tx.outcome?.status === "PendingApproval") {
+    await notifyOwner({
+      title: "A trade is waiting for your approval",
+      detail: `${run.intent}. ${run.tx.outcome.detail}`,
+      vault: VAULT_ID,
+      txUrl: run.tx.explorerUrl,
+    });
+  }
+}
+
+/**
+ * The most a fully compromised guard server could lose, at today's pool
+ * prices: it can sign trades right at the owner's floor, up to the
+ * autonomy limit per trade and the daily cap per day.
+ */
+export async function worstCaseIfGuardHacked(): Promise<{
+  perTradeUsd: number;
+  perDayUsd: number;
+  worstGapPct: number;
+  autonomousMaxUsd: number;
+  dailyCapUsd: number;
+}> {
+  const snap = await getVaultSnapshot();
+  const p = snap.policy;
+  const pool = await quoteRef("to_usdt", BigInt(1));
+  const usdtPerWnear = 1 / pool.wnearPerUsdt;
+  let worstGap = 0;
+  for (const f of p.price_floors ?? []) {
+    const floor = Number(f.min_out_per_in_e6) / 1e6;
+    const spot = f.token_in === WRAP_ID ? usdtPerWnear : pool.wnearPerUsdt;
+    worstGap = Math.max(worstGap, Math.max(0, 1 - floor / spot));
+  }
+  const autonomousMaxUsd = Math.min(Number(p.approval_above_usd_cents), Number(p.max_trade_usd_cents)) / 100;
+  const dailyCapUsd = Number(p.daily_cap_usd_cents) / 100;
+  return {
+    perTradeUsd: Number((autonomousMaxUsd * worstGap).toFixed(2)),
+    perDayUsd: Number((dailyCapUsd * worstGap).toFixed(2)),
+    worstGapPct: Number((worstGap * 100).toFixed(1)),
+    autonomousMaxUsd,
+    dailyCapUsd,
+  };
 }
 
 // ---------------------------------------------------------------------------

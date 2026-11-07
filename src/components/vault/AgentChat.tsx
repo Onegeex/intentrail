@@ -33,12 +33,15 @@ const LAYER_LABEL: Record<string, string> = {
   guard: "Guard wouldn't sign",
 };
 
-export function AgentChat({ configured }: { configured: boolean }) {
+export type RecordedLlm = { ranAt: string; model: string; hijacked: boolean; message: string; steps: Step[] };
+
+export function AgentChat({ configured, recorded }: { configured: boolean; recorded: RecordedLlm }) {
   const [message, setMessage] = useState(PRESETS[1].message);
   const [hijacked, setHijacked] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [steps, setSteps] = useState<Step[] | null>(null);
-  const [model, setModel] = useState<string | null>(null);
+  const [steps, setSteps] = useState<Step[] | null>(recorded.steps);
+  const [model, setModel] = useState<string | null>(recorded.model);
+  const [isRecorded, setIsRecorded] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   async function send() {
@@ -52,10 +55,15 @@ export function AgentChat({ configured }: { configured: boolean }) {
         body: JSON.stringify({ message, hijacked }),
       });
       const data = await res.json();
-      if (!data.ok) setErr(data.error || "The agent couldn't answer.");
-      else {
+      if (!data.ok) {
+        setErr(`${data.error || "The agent couldn't answer."} Showing the recorded run instead.`);
+        setSteps(recorded.steps);
+        setModel(recorded.model);
+        setIsRecorded(true);
+      } else {
         setSteps(data.steps);
         setModel(data.model);
+        setIsRecorded(false);
       }
     } catch {
       setErr("Couldn't reach the server. Check your connection and try again.");
@@ -120,6 +128,13 @@ export function AgentChat({ configured }: { configured: boolean }) {
           <h3 className="font-display text-xl font-extrabold tracking-wide text-ivory">What the agent did</h3>
           {model && <span className="font-mono text-xs text-ivory-dim">{model}</span>}
         </div>
+        {isRecorded && !busy && (
+          <p className="text-xs text-ivory-dim">
+            Recorded run,{" "}
+            {new Date(recorded.ranAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC,
+            hijacked mode: &ldquo;{recorded.message.slice(0, 90)}…&rdquo;. Send a message to run it live.
+          </p>
+        )}
         {!steps && !busy && (
           <p className="text-sm text-ivory-dim">
             The agent&apos;s replies, the tools it calls and what NEAR and the contract said back will appear here.

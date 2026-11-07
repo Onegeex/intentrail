@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { enforceRateLimit } from "@/lib/api";
-import { isVaultConfigured } from "@/lib/vault";
+import { LOW_BUDGET_NEAR, agentBudgetNear, getVaultSnapshot, isVaultConfigured } from "@/lib/vault";
 import { runAttackSuite } from "@/lib/vault-agent";
 
 export const runtime = "nodejs";
@@ -21,6 +21,13 @@ export async function POST(req: Request) {
   if (!isVaultConfigured()) return NextResponse.json({ ok: false, error: "The vault isn't configured on this deployment." }, { status: 503 });
   if (last && Date.now() - last.at < 90_000) {
     return NextResponse.json({ ok: true, cached: true, ranAt: new Date(last.at).toISOString(), ...last.data });
+  }
+  const snap = await getVaultSnapshot().catch(() => null);
+  if (snap && agentBudgetNear(snap) < LOW_BUDGET_NEAR) {
+    return NextResponse.json(
+      { ok: false, lowBudget: true, error: "The agent's gas budget is nearly used up, so live runs are paused until the owner refreshes it. The recorded run below is real." },
+      { status: 503 },
+    );
   }
   try {
     running ??= runAttackSuite();
