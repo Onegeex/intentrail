@@ -1,5 +1,5 @@
 {
- "ranAt": "2026-11-07T13:23:19.535Z",
+ "ranAt": "2026-11-07T13:31:30.964Z",
  "priceUsd": 3.69,
  "attempts": [
   {
@@ -8,7 +8,7 @@
    "how": "Agent key calls the vault's owner-only withdraw method.",
    "expected": "protocol",
    "blocked": true,
-   "blockedBy": "NEAR refused it: Access key does not allow method withdraw",
+   "blockedBy": "Refused by NEAR: the agent's key may only call execute(). NEAR said: \"Access key does not allow method withdraw\"",
    "result": {}
   },
   {
@@ -17,7 +17,7 @@
    "how": "Agent key signs ft_transfer on wrap.testnet to an attacker account.",
    "expected": "protocol",
    "blocked": true,
-   "blockedBy": "NEAR refused it: Deposit is not allowed with function call",
+   "blockedBy": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault-39ae84.testnet does not match transaction receiver wrap.testnet\"",
    "result": {}
   },
   {
@@ -26,7 +26,7 @@
    "how": "Agent key signs a plain NEAR transfer out of the vault.",
    "expected": "protocol",
    "blocked": true,
-   "blockedBy": "NEAR refused it: Not enough allowance for access key on account intentrail-vault-39ae84.testnet (allowance 0.498 NEAR, cost 1.0 NEAR)",
+   "blockedBy": "Refused by NEAR: sending tokens needs a full-access key, and the vault has none. NEAR said: \"Access key requires full access\"",
    "result": {}
   },
   {
@@ -37,8 +37,8 @@
    "blocked": true,
    "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key.",
    "result": {
-    "txHash": "6cQq8njMQwpNLwChBpMquR2o75ss1dGLZ8JdjWzKHcmj",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/6cQq8njMQwpNLwChBpMquR2o75ss1dGLZ8JdjWzKHcmj"
+    "txHash": "9hoUATqxDAytAHaYWYMLcBerxh8TU8GKHK4wEH46PWVT",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/9hoUATqxDAytAHaYWYMLcBerxh8TU8GKHK4wEH46PWVT"
    }
   },
   {
@@ -49,8 +49,8 @@
    "blocked": true,
    "blockedBy": "Contract check SIZE: $50 is over the $10 per-trade cap.",
    "result": {
-    "txHash": "7hiupPZxwurxdorLtxekrRm9yzWF7dSPucsPFEbERPJy",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/7hiupPZxwurxdorLtxekrRm9yzWF7dSPucsPFEbERPJy"
+    "txHash": "88kBsqWBkLKvfqwjM3QuU982mVzKMMb76rcaYN7Sn9yK",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/88kBsqWBkLKvfqwjM3QuU982mVzKMMb76rcaYN7Sn9yK"
    }
   },
   {
@@ -61,8 +61,8 @@
    "blocked": true,
    "blockedBy": "Contract check QUOTE_REPLAY: Quote was already used.",
    "result": {
-    "txHash": "969h23YYHCvMx3mwncgkbmnWoMBkFPeVwSJ2aXv11vkx",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/969h23YYHCvMx3mwncgkbmnWoMBkFPeVwSJ2aXv11vkx"
+    "txHash": "AJu5gMv979RKdWHNYqLuv3iNuFFF3LAatJAh16LkYpov",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/AJu5gMv979RKdWHNYqLuv3iNuFFF3LAatJAh16LkYpov"
    }
   },
   {
@@ -73,8 +73,8 @@
    "blocked": true,
    "blockedBy": "Contract check VENUE: attacker-intentrail.testnet is not an allowed venue.",
    "result": {
-    "txHash": "8fYmL4pzquhHvxNquyyroZGVtVoVco3VXyUiMAep6sjT",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/8fYmL4pzquhHvxNquyyroZGVtVoVco3VXyUiMAep6sjT"
+    "txHash": "5TzTjicNqvssocmnifRbssSfsaMHBXKkUmPcGNZo81dv",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/5TzTjicNqvssocmnifRbssSfsaMHBXKkUmPcGNZo81dv"
    }
   },
   {
@@ -85,8 +85,8 @@
    "blocked": false,
    "blockedBy": "Passed every check. $1.20 sent to wrap.testnet.",
    "result": {
-    "txHash": "9AQpvTpdcBXWgsmpzZvWmec8DpPpPeuhBcJUCkQYGRSh",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/9AQpvTpdcBXWgsmpzZvWmec8DpPpPeuhBcJUCkQYGRSh"
+    "txHash": "7hswvveZ4jNMGoE4ArQbdas3otvYJzRYJf8vcHvcqhS3",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/7hswvveZ4jNMGoE4ArQbdas3otvYJzRYJf8vcHvcqhS3"
    }
   }
  ]
