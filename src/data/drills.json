@@ -76,6 +76,12 @@
     "detail": "A stolen guardian key is no better: it can't move funds.",
     "result": "Refused: Only the owner can do this",
     "tx": "Fg4BSCwy75dVLk2bfBgTzR1KLJFppqG7UocZgGsKrWXK"
+   },
+   {
+    "title": "Real owner resumes after the timelock",
+    "detail": "Once the threat is dealt with (on mainnet: rotate the owner key first), the owner's queued resume applies after ten minutes. The guardian could have vetoed this too.",
+    "result": "APPLIED",
+    "tx": "EnbgErRrBVxJQRbSYEDPiUR1S645Pu1fyWdfBvknpW9q"
    }
   ]
  }
