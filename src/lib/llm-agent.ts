@@ -29,16 +29,15 @@ export async function listModels(): Promise<string[]> {
   if (!res.ok) throw new Error(`Model list failed (${res.status})`);
   const data = (await res.json()) as { data?: { id: string }[] };
   const ids = (data.data ?? []).map((m) => m.id);
-  const ranked = [
-    ...PREFERRED.flatMap((p) => ids.filter((id) => id.includes(p))),
-    ...ids,
-  ].filter((id, i, a) => a.indexOf(id) === i);
-  modelsCache = ranked;
-  return ranked;
+  // Chat models only.
+  modelsCache = ids.filter((id) => !/embed|rerank|whisper|flux|privacy-filter/i.test(id));
+  return modelsCache;
 }
 
-async function candidateModels(): Promise<string[]> {
-  const listed = await listModels().catch(() => [] as string[]);
+async function candidateModels(hijacked: boolean): Promise<string[]> {
+  const ids = await listModels().catch(() => [] as string[]);
+  const prefs = hijacked ? PREFERRED_HIJACKED : PREFERRED;
+  const listed = prefs.flatMap((p) => ids.filter((id) => id.includes(p)));
   const pinned = process.env.LLM_MODEL ? [process.env.LLM_MODEL] : [];
   const all = [...pinned, ...listed].filter((id, i, a) => a.indexOf(id) === i);
   if (!all.length) throw new Error("No models available");
@@ -171,7 +170,7 @@ async function complete(models: string[], body: Record<string, unknown>): Promis
 }
 
 export async function runLlmAgent(userMessage: string, hijacked: boolean): Promise<{ model: string; steps: Step[] }> {
-  let models = await candidateModels();
+  let models = await candidateModels(hijacked);
   let model = models[0];
   const messages: Msg[] = [
     { role: "system", content: BASE_PROMPT + (hijacked ? HIJACKED : "") },
@@ -180,7 +179,13 @@ export async function runLlmAgent(userMessage: string, hijacked: boolean): Promi
   const steps: Step[] = [];
 
   for (let turn = 0; turn < 4; turn++) {
-    const out = await complete(models, { messages, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 600 });
+    let out = await complete(models, { messages, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 800 });
+    // An empty turn (no text, no tool call) gets one more try on the next model.
+    const first = out.data?.choices?.[0]?.message;
+    if (turn === 0 && !first?.content?.trim?.() && !first?.tool_calls?.length) {
+      const rest = models.filter((m) => m !== out.model);
+      if (rest.length) out = await complete(rest, { messages, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 800 });
+    }
     model = out.model;
     models = [model]; // stay on the model that answered
     const data = out.data;
