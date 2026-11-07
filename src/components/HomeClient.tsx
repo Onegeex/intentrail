@@ -248,7 +248,7 @@ export function HomeClient({
             <a className="text-ivory hover:underline" href={CONTRACT_SRC}>
               Contract
             </a>
-            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vault?.vaultId ?? "intentrail-vault2-39ae84.testnet"}`}>
+            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vault?.vaultId ?? "intentrail-vault3-39ae84.testnet"}`}>
               Vault on NearBlocks
             </a>
             <Link className="text-ivory hover:underline" href="/mainnet">

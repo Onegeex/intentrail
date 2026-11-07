@@ -38,6 +38,8 @@ const NEAR_TOKEN: &str = "near";
 const DAY_MS: u64 = 86_400_000;
 const MAX_EVENTS: usize = 25;
 const GAS_FOR_CALL: Gas = Gas::from_tgas(60);
+/// ft_transfer_call -> Ref swap -> transfer the output back needs room.
+const GAS_FOR_SWAP: Gas = Gas::from_tgas(200);
 const GAS_FOR_CALLBACK: Gas = Gas::from_tgas(15);
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 /// Gas allowance attached to the agent key. Fees only; it can't move funds.
@@ -452,7 +454,7 @@ impl GuardVault {
                 id.0,
                 Status::Failed,
                 "VENUE",
-                "The venue didn't fill at the minimum output, so the tokens came back. Nothing was spent.",
+                "The venue didn't complete the trade (for example, below the minimum output), so the tokens came back. Nothing was spent.",
                 None,
             );
         }
@@ -692,7 +694,7 @@ impl GuardVault {
                         .to_string()
                         .into_bytes(),
                     ONE_YOCTO,
-                    GAS_FOR_CALL,
+                    GAS_FOR_SWAP,
                 )
             }
         };
