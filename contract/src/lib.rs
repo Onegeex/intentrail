@@ -101,9 +101,17 @@ pub struct Policy {
     /// A swap pair with no floor can't be traded.
     #[serde(default)]
     pub price_floors: Vec<PriceFloor>,
-    /// Tokens the owner may always exit into (stablecoins), floors aside.
+    /// Tokens the owner may exit into (stablecoins) even when paused.
     #[serde(default)]
     pub exit_tokens: Vec<AccountId>,
+    /// How far under the last guard-signed rate the owner may exit alone, in bps.
+    /// Deeper exits need the guardian, or wait out the timelock.
+    #[serde(default = "default_exit_discount")]
+    pub exit_max_discount_bps: u32,
+}
+
+fn default_exit_discount() -> u32 {
+    1_000
 }
 
 /// `min_amount_out * 1e6 >= amount_in * min_out_per_in_e6`, in raw units.
@@ -122,6 +130,31 @@ pub struct PendingWithdrawal {
     pub token: AccountId,
     pub amount: U128,
     pub eta_ms: U64,
+}
+
+/// An exit deeper than the owner may take alone.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct PendingExit {
+    pub id: U64,
+    pub venue: AccountId,
+    pub pool_id: u64,
+    pub token_in: AccountId,
+    pub token_out: AccountId,
+    pub amount: U128,
+    pub min_amount_out: U128,
+    pub eta_ms: U64,
+}
+
+/// The rate of the last swap the guard signed and the contract accepted,
+/// as `min_amount_out * 1e6 / amount_in`.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct LastRate {
+    pub token_in: AccountId,
+    pub token_out: AccountId,
+    pub out_per_in_e6: U128,
+    pub at_ms: U64,
 }
 
 #[near(serializers = [json, borsh])]
@@ -209,6 +242,8 @@ pub struct GuardVault {
     timelock_ms: u64,
     pending_policy: Option<PendingPolicy>,
     pending_withdrawals: Vec<PendingWithdrawal>,
+    pending_exits: Vec<PendingExit>,
+    last_rates: Vec<LastRate>,
 }
 
 #[near]
@@ -234,6 +269,8 @@ impl GuardVault {
             timelock_ms: timelock_ms.0,
             pending_policy: None,
             pending_withdrawals: Vec::new(),
+            pending_exits: Vec::new(),
+            last_rates: Vec::new(),
         }
     }
 
@@ -291,6 +328,9 @@ impl GuardVault {
             return self.reject(id, check, &detail, Some(&q));
         }
         self.used_nonces.insert(q.nonce.0);
+        if let TradeKind::RefSwap { .. } = q.kind {
+            self.record_rate(&q.token_in, &q.token_out, q.amount_in, q.min_amount_out);
+        }
 
         // 4. Above the threshold a person decides.
         if q.usd_cents.0 > self.policy.approval_above_usd_cents.0 {
@@ -489,8 +529,11 @@ impl GuardVault {
         }
     }
 
-    /// Crash exit: the owner can always swap into an exit token at once,
-    /// whatever the price floors and kill switch say. Funds stay in the vault.
+    /// Crash exit: the owner swaps into an exit token at once, even when
+    /// paused and below the price floors. Alone, the owner may go at most
+    /// `exit_max_discount_bps` under the last guard-signed rate for the pair
+    /// (or the price floor if there is none), so a stolen owner key can't dump
+    /// the vault into a pool it has pushed. Deeper exits use `request_exit`.
     #[allow(clippy::too_many_arguments)]
     pub fn exit_to_stable(
         &mut self,
@@ -502,15 +545,76 @@ impl GuardVault {
         min_amount_out: U128,
     ) {
         self.assert_owner();
-        require!(self.policy.exit_tokens.contains(&token_out), "token_out is not an exit token");
-        require!(self.policy.allowed_tokens.contains(&token_in), "token_in is not allowlisted");
-        require!(self.policy.allowed_venues.contains(&venue), "venue is not allowed");
-        require!(token_in.as_str() != NEAR_TOKEN, "Wrap NEAR first");
-        require!(min_amount_out.0 > 0, "Set a minimum output");
+        self.assert_exit_shape(&venue, &token_in, &token_out, min_amount_out);
+        let reference = self
+            .reference_rate(&token_in, &token_out)
+            .unwrap_or_else(|| env::panic_str("EXIT_FLOOR: no guard-signed rate or floor for this pair. Use request_exit."));
+        let disc = self.policy.exit_max_discount_bps as u128;
+        let lhs = min_amount_out.0.checked_mul(1_000_000 * 10_000);
+        let rhs = amount.0.checked_mul(reference).and_then(|x| x.checked_mul(10_000 - disc.min(10_000)));
+        match (lhs, rhs) {
+            (Some(l), Some(r)) if l >= r => {}
+            _ => env::panic_str(&format!(
+                "EXIT_FLOOR: more than {}% under the last guard-signed rate. Ask the guardian (request_exit).",
+                disc as f64 / 100.0
+            )),
+        }
         let id = self.take_id();
-        let detail = format!("Owner exited {} of {} into {}.", amount.0, token_in, token_out);
+        let detail = format!("Owner exited {} of {} into {}, within {}% of the last good rate.", amount.0, token_in, token_out, disc as f64 / 100.0);
         self.log_event(id, Status::Executed, "EXIT", &detail, None);
         self.dispatch(id, &TradeKind::RefSwap { pool_id }, &token_in, &token_out, amount, min_amount_out, &venue, 0);
+    }
+
+    /// An exit at any price. It waits for the guardian's approval, or the timelock.
+    #[allow(clippy::too_many_arguments)]
+    pub fn request_exit(
+        &mut self,
+        venue: AccountId,
+        pool_id: u64,
+        token_in: AccountId,
+        token_out: AccountId,
+        amount: U128,
+        min_amount_out: U128,
+    ) -> PendingExit {
+        self.assert_owner();
+        self.assert_exit_shape(&venue, &token_in, &token_out, min_amount_out);
+        let id = self.take_id();
+        let e = PendingExit {
+            id: U64(id),
+            venue,
+            pool_id,
+            token_in,
+            token_out,
+            amount,
+            min_amount_out,
+            eta_ms: U64(env::block_timestamp_ms() + self.timelock_ms),
+        };
+        self.pending_exits.push(e.clone());
+        self.log_event(id, Status::PendingApproval, "EXIT_DEEP", "Owner asked for a deep exit. The guardian can approve it now, or it waits out the timelock.", None);
+        e
+    }
+
+    /// Guardian approves a queued deep exit straight away.
+    pub fn approve_exit(&mut self, id: U64) {
+        require!(env::predecessor_account_id() == self.guardian, "Only the guardian can approve an exit");
+        self.run_exit(id, "Guardian approved the deep exit.");
+    }
+
+    /// Owner runs a queued deep exit once the timelock has passed.
+    pub fn apply_exit(&mut self, id: U64) {
+        self.assert_owner();
+        let e = self.pending_exits.iter().find(|e| e.id == id).unwrap_or_else(|| env::panic_str("No queued exit with that id"));
+        require!(env::block_timestamp_ms() >= e.eta_ms.0, "Timelock has not passed yet");
+        self.run_exit(id, "Deep exit applied after the timelock.");
+    }
+
+    pub fn cancel_exit(&mut self, id: U64) {
+        self.assert_owner_or_guardian();
+        let before = self.pending_exits.len();
+        self.pending_exits.retain(|e| e.id != id);
+        if self.pending_exits.len() < before {
+            self.log_event(id.0, Status::Cancelled, "EXIT_DEEP", "Queued deep exit cancelled.", None);
+        }
     }
 
     /// Register this vault with a token contract so it can hold that token.
@@ -571,6 +675,12 @@ impl GuardVault {
     }
     pub fn get_guardian(&self) -> &AccountId {
         &self.guardian
+    }
+    pub fn get_pending_exits(&self) -> &Vec<PendingExit> {
+        &self.pending_exits
+    }
+    pub fn get_last_rates(&self) -> &Vec<LastRate> {
+        &self.last_rates
     }
     pub fn get_pending_withdrawals(&self) -> &Vec<PendingWithdrawal> {
         &self.pending_withdrawals
@@ -646,6 +756,47 @@ impl GuardVault {
     }
 
     /// True when `new` allows nothing that `old` didn't.
+    fn assert_exit_shape(&self, venue: &AccountId, token_in: &AccountId, token_out: &AccountId, min_amount_out: U128) {
+        require!(self.policy.exit_tokens.contains(token_out), "token_out is not an exit token");
+        require!(self.policy.allowed_tokens.contains(token_in), "token_in is not allowlisted");
+        require!(self.policy.allowed_venues.contains(venue), "venue is not allowed");
+        require!(token_in.as_str() != NEAR_TOKEN, "Wrap NEAR first");
+        require!(min_amount_out.0 > 0, "Set a minimum output");
+    }
+
+    fn run_exit(&mut self, id: U64, detail: &str) {
+        let idx = self.pending_exits.iter().position(|e| e.id == id).unwrap_or_else(|| env::panic_str("No queued exit with that id"));
+        let e = self.pending_exits.remove(idx);
+        self.log_event(id.0, Status::Executed, "EXIT_DEEP", detail, None);
+        self.dispatch(id.0, &TradeKind::RefSwap { pool_id: e.pool_id }, &e.token_in, &e.token_out, e.amount, e.min_amount_out, &e.venue, 0);
+    }
+
+    fn record_rate(&mut self, token_in: &AccountId, token_out: &AccountId, amount_in: U128, min_out: U128) {
+        if amount_in.0 == 0 {
+            return;
+        }
+        let Some(rate) = min_out.0.checked_mul(1_000_000).map(|x| x / amount_in.0) else { return };
+        let r = LastRate { token_in: token_in.clone(), token_out: token_out.clone(), out_per_in_e6: U128(rate), at_ms: U64(env::block_timestamp_ms()) };
+        match self.last_rates.iter_mut().find(|l| &l.token_in == token_in && &l.token_out == token_out) {
+            Some(l) => *l = r,
+            None => self.last_rates.push(r),
+        }
+    }
+
+    fn reference_rate(&self, token_in: &AccountId, token_out: &AccountId) -> Option<u128> {
+        self.last_rates
+            .iter()
+            .find(|l| &l.token_in == token_in && &l.token_out == token_out)
+            .map(|l| l.out_per_in_e6.0)
+            .or_else(|| {
+                self.policy
+                    .price_floors
+                    .iter()
+                    .find(|f| &f.token_in == token_in && &f.token_out == token_out)
+                    .map(|f| f.min_out_per_in_e6.0)
+            })
+    }
+
     fn is_no_looser(new: &Policy, old: &Policy) -> bool {
         (new.kill_switch || !old.kill_switch)
             && new.allowed_tokens.iter().all(|t| old.allowed_tokens.contains(t))
@@ -658,6 +809,7 @@ impl GuardVault {
             && new.approval_above_usd_cents.0 <= old.approval_above_usd_cents.0
             && new.max_cost_bps <= old.max_cost_bps
             && new.exit_tokens.iter().all(|t| old.exit_tokens.contains(t))
+            && new.exit_max_discount_bps <= old.exit_max_discount_bps
             && old.price_floors.iter().all(|of| {
                 new.price_floors.iter().any(|nf| {
                     nf.token_in == of.token_in

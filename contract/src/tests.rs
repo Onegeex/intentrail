@@ -49,6 +49,7 @@ fn policy() -> Policy {
             min_out_per_in_e6: U128(1_150_000),
         }],
         exit_tokens: vec![acc(USDT)],
+        exit_max_discount_bps: 1_000,
     }
 }
 
@@ -522,12 +523,78 @@ fn guardian_can_veto_a_loosening_change() {
 
 #[test]
 fn owner_can_exit_to_stable_during_a_crash() {
-    // Paused, and the market is far below the floor: the owner can still exit.
+    // Paused: the owner can still exit at once, within 10% of the last good rate.
     let mut v = setup();
+    as_agent();
+    let q = swap(TENTH, TENTH * 124 / 100, 1); // guard-signed at 1.24
+    assert_eq!(v.execute(q.clone(), sign(&q)).status, Status::Executed);
+    assert_eq!(v.get_last_rates()[0].out_per_in_e6.0, 1_240_000);
     as_account(OWNER);
     v.set_kill_switch(true);
-    v.exit_to_stable(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH / 2));
+    // 1.12 is under the 1.15 floor but within 10% of 1.24.
+    v.exit_to_stable(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH * 112 / 100));
     assert_eq!(v.get_events().first().unwrap().check, "EXIT");
+}
+
+#[test]
+#[should_panic(expected = "EXIT_FLOOR")]
+fn stolen_owner_key_cannot_dump_at_a_pushed_price() {
+    // An attacker with the owner key pushes the pool, then tries to exit at half price.
+    let mut v = setup();
+    as_agent();
+    let q = swap(TENTH, TENTH * 124 / 100, 1);
+    v.execute(q.clone(), sign(&q));
+    as_account(OWNER);
+    v.exit_to_stable(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH / 2));
+}
+
+#[test]
+#[should_panic(expected = "EXIT_FLOOR")]
+fn exit_without_a_trade_uses_the_floor() {
+    let mut v = setup();
+    as_account(OWNER);
+    // No trade yet: the reference is the 1.15 floor, so 1.00 is more than 10% under.
+    v.exit_to_stable(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH));
+}
+
+#[test]
+fn deep_exit_needs_the_guardian() {
+    let mut v = setup();
+    as_account(OWNER);
+    let e = v.request_exit(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH / 2));
+    assert_eq!(v.get_pending_exits().len(), 1);
+    as_account(GUARDIAN);
+    v.approve_exit(e.id);
+    assert!(v.get_pending_exits().is_empty());
+    assert_eq!(v.get_events().first().unwrap().check, "EXIT_DEEP");
+}
+
+#[test]
+#[should_panic(expected = "Timelock has not passed yet")]
+fn deep_exit_cannot_skip_the_timelock() {
+    let mut v = setup();
+    as_account(OWNER);
+    let e = v.request_exit(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH / 2));
+    v.apply_exit(e.id);
+}
+
+#[test]
+#[should_panic(expected = "Only the guardian can approve an exit")]
+fn owner_cannot_approve_own_deep_exit() {
+    let mut v = setup();
+    as_account(OWNER);
+    let e = v.request_exit(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH / 2));
+    v.approve_exit(e.id);
+}
+
+#[test]
+fn guardian_can_cancel_a_deep_exit() {
+    let mut v = setup();
+    as_account(OWNER);
+    let e = v.request_exit(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH / 2));
+    as_account(GUARDIAN);
+    v.cancel_exit(e.id);
+    assert!(v.get_pending_exits().is_empty());
 }
 
 #[test]

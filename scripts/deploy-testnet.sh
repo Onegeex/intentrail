@@ -58,7 +58,8 @@ POLICY=$(cat <<JSON
     {"token_in": "$WRAP", "token_out": "$USDT", "min_out_per_in_e6": "1150000"},
     {"token_in": "$USDT", "token_out": "$WRAP", "min_out_per_in_e6": "750000"}
   ],
-  "exit_tokens": ["$USDT"]
+  "exit_tokens": ["$USDT"],
+  "exit_max_discount_bps": 1000
 }
 JSON
 )
