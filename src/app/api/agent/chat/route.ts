@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { enforceRateLimit } from "@/lib/api";
-import { llmConfigured, runLlmAgent } from "@/lib/llm-agent";
+import { listModels, llmConfigured, runLlmAgent } from "@/lib/llm-agent";
 import { isVaultConfigured } from "@/lib/vault";
 
 export const runtime = "nodejs";
@@ -14,8 +14,10 @@ const bodySchema = z.object({
   hijacked: z.boolean().default(false),
 });
 
-export async function GET() {
-  return NextResponse.json({ ok: true, configured: llmConfigured() && isVaultConfigured() });
+export async function GET(req: Request) {
+  const wantModels = new URL(req.url).searchParams.has("models");
+  const models = wantModels && llmConfigured() ? await listModels().catch((e) => [String(e.message ?? e)]) : undefined;
+  return NextResponse.json({ ok: true, configured: llmConfigured() && isVaultConfigured(), models });
 }
 
 export async function POST(req: Request) {

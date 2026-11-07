@@ -17,10 +17,11 @@ export function llmConfigured() {
   return Boolean(process.env.LLM_API_KEY);
 }
 
-let modelCache: string | null = null;
-async function pickModel(): Promise<string> {
-  if (process.env.LLM_MODEL) return process.env.LLM_MODEL;
-  if (modelCache) return modelCache;
+let modelsCache: string[] | null = null;
+
+/** Models to try, best first. LLM_MODEL pins one; otherwise we rank what the provider lists. */
+export async function listModels(): Promise<string[]> {
+  if (modelsCache) return modelsCache;
   const res = await fetch(`${BASE}/models`, {
     headers: { Authorization: `Bearer ${process.env.LLM_API_KEY}` },
     signal: AbortSignal.timeout(10_000),
@@ -28,9 +29,20 @@ async function pickModel(): Promise<string> {
   if (!res.ok) throw new Error(`Model list failed (${res.status})`);
   const data = (await res.json()) as { data?: { id: string }[] };
   const ids = (data.data ?? []).map((m) => m.id);
-  modelCache = PREFERRED.map((p) => ids.find((id) => id.includes(p))).find(Boolean) ?? ids[0];
-  if (!modelCache) throw new Error("No models available");
-  return modelCache;
+  const ranked = [
+    ...PREFERRED.flatMap((p) => ids.filter((id) => id.includes(p))),
+    ...ids,
+  ].filter((id, i, a) => a.indexOf(id) === i);
+  modelsCache = ranked;
+  return ranked;
+}
+
+async function candidateModels(): Promise<string[]> {
+  const listed = await listModels().catch(() => [] as string[]);
+  const pinned = process.env.LLM_MODEL ? [process.env.LLM_MODEL] : [];
+  const all = [...pinned, ...listed].filter((id, i, a) => a.indexOf(id) === i);
+  if (!all.length) throw new Error("No models available");
+  return all.slice(0, 4);
 }
 
 const TOOLS = [
@@ -140,8 +152,27 @@ async function runTool(name: string, args: Record<string, unknown>): Promise<Omi
 
 type Msg = { role: string; content?: string | null; tool_calls?: unknown[]; tool_call_id?: string; name?: string };
 
+async function complete(models: string[], body: Record<string, unknown>): Promise<{ model: string; data: any }> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  let last = "";
+  for (const model of models) {
+    const res = await fetch(`${BASE}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.LLM_API_KEY}` },
+      body: JSON.stringify({ ...body, model }),
+      signal: AbortSignal.timeout(35_000),
+    }).catch((e) => ({ ok: false, status: 0, statusText: String(e) }) as Response);
+    if (res.status === 402) throw new Error("The model provider says the operator's account is out of credits.");
+    if (res.ok) return { model, data: await res.json() };
+    last = `${model}: ${res.status}`;
+    // 4xx other than rate limits won't improve with another model.
+    if (res.status >= 400 && res.status < 500 && res.status !== 404 && res.status !== 429) break;
+  }
+  throw new Error(`The model didn't answer (${last}).`);
+}
+
 export async function runLlmAgent(userMessage: string, hijacked: boolean): Promise<{ model: string; steps: Step[] }> {
-  const model = await pickModel();
+  let models = await candidateModels();
+  let model = models[0];
   const messages: Msg[] = [
     { role: "system", content: BASE_PROMPT + (hijacked ? HIJACKED : "") },
     { role: "user", content: userMessage },
@@ -149,15 +180,10 @@ export async function runLlmAgent(userMessage: string, hijacked: boolean): Promi
   const steps: Step[] = [];
 
   for (let turn = 0; turn < 4; turn++) {
-    const res = await fetch(`${BASE}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.LLM_API_KEY}` },
-      body: JSON.stringify({ model, messages, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 600 }),
-      signal: AbortSignal.timeout(40_000),
-    });
-    if (res.status === 402) throw new Error("The model provider says the operator's account is out of credits.");
-    if (!res.ok) throw new Error(`The model didn't answer (${res.status}).`);
-    const data = await res.json();
+    const out = await complete(models, { messages, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 600 });
+    model = out.model;
+    models = [model]; // stay on the model that answered
+    const data = out.data;
     type ToolCall = { id: string; function: { name: string; arguments: string } };
     const msg = data.choices?.[0]?.message as (Omit<Msg, "tool_calls"> & { tool_calls?: ToolCall[] }) | undefined;
     if (!msg) throw new Error("The model returned nothing.");
