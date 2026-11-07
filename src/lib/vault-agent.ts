@@ -1,5 +1,6 @@
 import { fetchPrices } from "./prices";
 import {
+  GAS,
   REF_ID,
   REF_POOL_ID,
   USDT_ID,
@@ -145,7 +146,7 @@ export async function tradeUsd(usd: number, prefer?: "wrap" | SwapDir): Promise<
       intent: `Wrap ${nearAmt} NEAR into wNEAR ($${(nearAmt * nearUsd).toFixed(2)})`,
       priceUsd: nearUsd,
       quote,
-      tx: await agentExecute(s.quoteJson, s.signatureB64),
+      tx: await agentExecute(s.quoteJson, s.signatureB64, "agent", GAS.wrap),
       pricing: "wrap.testnet converts 1:1, so the minimum output equals the input.",
     };
   }
@@ -229,34 +230,34 @@ export async function runAttackSuite(): Promise<{ priceUsd: number; attempts: At
     layer: "contract",
     title: "Call execute() from another account with a valid quote",
     how: "An outside account submits a genuine guard-signed quote. Only the agent key or the owner may execute.",
-    result: await agentExecute(smallSigned.quoteJson, smallSigned.signatureB64, "outsider"),
+    result: await agentExecute(smallSigned.quoteJson, smallSigned.signatureB64, "outsider", GAS.refusal),
   });
 
   const honest = buildWrapQuote(Number((1.5 / nearUsd).toFixed(4)), nearUsd);
   const hs = signQuote(honest);
   const tampered = hs.quoteJson.replace(`"amount_in":"${honest.amount_in}"`, `"amount_in":"${toRaw(2.5).toString()}"`);
-  add({ id: "tamper", layer: "contract", title: "Edit a signed quote to move more", how: "The guard signed a $1.50 trade; the agent raises the amount before sending it.", result: await agentExecute(tampered, hs.signatureB64) });
+  add({ id: "tamper", layer: "contract", title: "Edit a signed quote to move more", how: "The guard signed a $1.50 trade; the agent raises the amount before sending it.", result: await agentExecute(tampered, hs.signatureB64, "agent", GAS.refusal) });
 
   const big = buildWrapQuote(2.9, nearUsd, { usd_cents: "5000" });
   const bigSigned = signQuote(big);
-  add({ id: "leaked-size", layer: "contract", title: "Steal the guard key and sign a $50 trade", how: "A leak nobody has noticed yet: a validly signed quote, far above the $10 per-trade cap.", result: await agentExecute(bigSigned.quoteJson, bigSigned.signatureB64) });
+  add({ id: "leaked-size", layer: "contract", title: "Steal the guard key and sign a $50 trade", how: "A leak nobody has noticed yet: a validly signed quote, far above the $10 per-trade cap.", result: await agentExecute(bigSigned.quoteJson, bigSigned.signatureB64, "agent", GAS.refusal) });
 
   const rq = await quoteRef("to_usdt", toRaw(0.3));
   const dump = buildSwapQuote(rq, nearUsd, { min_amount_out: (rq.expectedOut / BigInt(2)).toString() });
   const dumpSigned = signQuote(dump);
-  add({ id: "leaked-price", layer: "contract", title: "Steal the guard key and sell at half price", how: "A validly signed swap whose minimum output is half the market rate.", result: await agentExecute(dumpSigned.quoteJson, dumpSigned.signatureB64) });
+  add({ id: "leaked-price", layer: "contract", title: "Steal the guard key and sell at half price", how: "A validly signed swap whose minimum output is half the market rate.", result: await agentExecute(dumpSigned.quoteJson, dumpSigned.signatureB64, "agent", GAS.refusal) });
 
   if (process.env.GUARD_LEAKED_KEY) {
     const old = buildWrapQuote(Number((1.2 / nearUsd).toFixed(4)), nearUsd);
     const oldSigned = signQuote(old, "leaked");
-    add({ id: "rotated", layer: "contract", title: "Use the guard key the owner already rotated out", how: "After the key-leak drill, quotes signed by the old key are worthless.", result: await agentExecute(oldSigned.quoteJson, oldSigned.signatureB64) });
+    add({ id: "rotated", layer: "contract", title: "Use the guard key the owner already rotated out", how: "After the key-leak drill, quotes signed by the old key are worthless.", result: await agentExecute(oldSigned.quoteJson, oldSigned.signatureB64, "agent", GAS.refusal) });
   }
 
-  add({ id: "replay", layer: "contract", title: "Replay the same signed quote", how: "Send that exact quote and signature a second time.", result: await agentExecute(bigSigned.quoteJson, bigSigned.signatureB64) });
+  add({ id: "replay", layer: "contract", title: "Replay the same signed quote", how: "Send that exact quote and signature a second time.", result: await agentExecute(bigSigned.quoteJson, bigSigned.signatureB64, "agent", GAS.refusal) });
 
   const evil = buildSwapQuote(rq, nearUsd, { venue: ATTACKER });
   const evilSigned = signQuote(evil);
-  add({ id: "venue", layer: "contract", title: "Send a swap to the attacker's contract", how: "A signed swap whose venue is an account the owner never approved.", result: await agentExecute(evilSigned.quoteJson, evilSigned.signatureB64) });
+  add({ id: "venue", layer: "contract", title: "Send a swap to the attacker's contract", how: "A signed swap whose venue is an account the owner never approved.", result: await agentExecute(evilSigned.quoteJson, evilSigned.signatureB64, "agent", GAS.refusal) });
 
   // Layer 3: the DEX enforces the minimum output the contract wrote.
   const greedy = buildSwapQuote(rq, nearUsd, { min_amount_out: ((rq.spotOut * BigInt(102)) / BigInt(100)).toString() });

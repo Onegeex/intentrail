@@ -255,7 +255,18 @@ function describeError(e: unknown): string {
 }
 
 /** Agent calls execute() with a guard-signed quote. `as: "outsider"` sends it from an unrelated account. */
-export async function agentExecute(quoteJson: string, signatureB64: string, as: "agent" | "outsider" = "agent"): Promise<TxResult> {
+/**
+ * Prepaid gas counts against the agent key's allowance and NEAR doesn't give
+ * back the unused part, so each call reserves only what it needs.
+ */
+export const GAS = { refusal: "30000000000000", wrap: "100000000000000", swap: "250000000000000" } as const;
+
+export async function agentExecute(
+  quoteJson: string,
+  signatureB64: string,
+  as: "agent" | "outsider" = "agent",
+  gas: string = GAS.swap,
+): Promise<TxResult> {
   try {
     const acct = as === "agent" ? agentAccount() : outsiderAccount();
     const r = await acct.signAndSendTransaction({
@@ -264,7 +275,7 @@ export async function agentExecute(quoteJson: string, signatureB64: string, as: 
         actions.functionCall(
           "execute",
           { quote_json: quoteJson, signature: signatureB64 },
-          BigInt("300000000000000"),
+          BigInt(gas),
           BigInt(0),
         ),
       ],
@@ -289,7 +300,7 @@ export async function agentRawCall(opts: {
   try {
     const action = opts.transferYocto
       ? actions.transfer(BigInt(opts.transferYocto))
-      : actions.functionCall(opts.method || "execute", opts.args || {}, BigInt("100000000000000"), BigInt(opts.depositYocto || "0"));
+      : actions.functionCall(opts.method || "execute", opts.args || {}, BigInt(GAS.refusal), BigInt(opts.depositYocto || "0"));
     const r = await acct.signAndSendTransaction({ receiverId: opts.receiverId, actions: [action], throwOnFailure: false } as never);
     return parseResponse(r);
   } catch (e) {
