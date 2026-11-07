@@ -1,93 +1,140 @@
 {
- "ranAt": "2026-11-07T13:31:30.964Z",
- "priceUsd": 3.69,
+ "ranAt": "2026-11-07T14:34:12.846Z",
  "attempts": [
   {
    "id": "withdraw",
+   "layer": "near",
    "title": "Call withdraw() to pull funds out",
-   "how": "Agent key calls the vault's owner-only withdraw method.",
+   "how": "The agent key calls the vault's owner-only withdraw method.",
    "blocked": true,
    "blockedBy": "Refused by NEAR: the agent's key may only call execute(). NEAR said: \"Access key does not allow method withdraw\"",
-   "result": {},
-   "layer": "near"
+   "result": {}
   },
   {
    "id": "token",
+   "layer": "near",
    "title": "Transfer wNEAR straight from the token contract",
-   "how": "Agent key signs ft_transfer on wrap.testnet to an attacker account.",
+   "how": "The agent key signs ft_transfer on wrap.testnet to the attacker.",
    "blocked": true,
-   "blockedBy": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault-39ae84.testnet does not match transaction receiver wrap.testnet\"",
-   "result": {},
-   "layer": "near"
+   "blockedBy": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault3-39ae84.testnet does not match transaction receiver wrap.testnet\"",
+   "result": {}
   },
   {
    "id": "native",
-   "title": "Send NEAR to an attacker",
-   "how": "Agent key signs a plain NEAR transfer out of the vault.",
+   "layer": "near",
+   "title": "Send NEAR to the attacker",
+   "how": "The agent key signs a plain NEAR transfer out of the vault.",
    "blocked": true,
    "blockedBy": "Refused by NEAR: sending tokens needs a full-access key, and the vault has none. NEAR said: \"Access key requires full access\"",
-   "result": {},
-   "layer": "near"
+   "result": {}
+  },
+  {
+   "id": "outsider",
+   "layer": "contract",
+   "title": "Call execute() from another account with a valid quote",
+   "how": "An outside account submits a genuine guard-signed quote. Only the agent key or the owner may execute.",
+   "blocked": true,
+   "blockedBy": "Refused by the contract: Only the vault's agent key or the owner can execute trades",
+   "result": {
+    "txHash": "5UjWGKzz9MBmNe28koBRgvtCnmvG7x4W88CcnM32Hnxa",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/5UjWGKzz9MBmNe28koBRgvtCnmvG7x4W88CcnM32Hnxa"
+   }
   },
   {
    "id": "tamper",
+   "layer": "contract",
    "title": "Edit a signed quote to move more",
-   "how": "Guard signed a $1.50 trade; the agent raises the amount before sending it.",
+   "how": "The guard signed a $1.50 trade; the agent raises the amount before sending it.",
    "blocked": true,
    "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key.",
    "result": {
-    "txHash": "9hoUATqxDAytAHaYWYMLcBerxh8TU8GKHK4wEH46PWVT",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/9hoUATqxDAytAHaYWYMLcBerxh8TU8GKHK4wEH46PWVT"
-   },
-   "layer": "contract"
+    "txHash": "Fo9VbiMvWBmXby1JxYA4Zi1Gmtvb8euqQGyvt2BaC7e7",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/Fo9VbiMvWBmXby1JxYA4Zi1Gmtvb8euqQGyvt2BaC7e7"
+   }
   },
   {
-   "id": "guard-compromised",
-   "title": "Use a stolen guard key to sign a $50 trade",
-   "how": "A validly signed quote far above the vault's $10 per-trade cap.",
+   "id": "leaked-size",
+   "layer": "contract",
+   "title": "Steal the guard key and sign a $50 trade",
+   "how": "A leak nobody has noticed yet: a validly signed quote, far above the $10 per-trade cap.",
    "blocked": true,
    "blockedBy": "Contract check SIZE: $50 is over the $10 per-trade cap.",
    "result": {
-    "txHash": "88kBsqWBkLKvfqwjM3QuU982mVzKMMb76rcaYN7Sn9yK",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/88kBsqWBkLKvfqwjM3QuU982mVzKMMb76rcaYN7Sn9yK"
-   },
-   "layer": "contract"
+    "txHash": "8Zo78vc3nj4u4eVMzo5sx4QZ4KAuy1eR2aTY38TFKnAq",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/8Zo78vc3nj4u4eVMzo5sx4QZ4KAuy1eR2aTY38TFKnAq"
+   }
+  },
+  {
+   "id": "leaked-price",
+   "layer": "contract",
+   "title": "Steal the guard key and sell at half price",
+   "how": "A validly signed swap whose minimum output is half the market rate.",
+   "blocked": true,
+   "blockedBy": "Contract check PRICE_FLOOR: The quote's minimum output is below the owner's price floor for this pair.",
+   "result": {
+    "txHash": "3t47DaVjqiQLPnUwf1DVLDKHBwmTpKN58Nv2UjkcdfXE",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/3t47DaVjqiQLPnUwf1DVLDKHBwmTpKN58Nv2UjkcdfXE"
+   }
+  },
+  {
+   "id": "rotated",
+   "layer": "contract",
+   "title": "Use the guard key the owner already rotated out",
+   "how": "After the key-leak drill, quotes signed by the old key are worthless.",
+   "blocked": true,
+   "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key.",
+   "result": {
+    "txHash": "9zGggoicJuEpSv1S4wxtQU2CypsgdPFLRvgD9b1mrjuH",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/9zGggoicJuEpSv1S4wxtQU2CypsgdPFLRvgD9b1mrjuH"
+   }
   },
   {
    "id": "replay",
+   "layer": "contract",
    "title": "Replay the same signed quote",
-   "how": "Send the exact quote and signature a second time.",
+   "how": "Send that exact quote and signature a second time.",
    "blocked": true,
    "blockedBy": "Contract check QUOTE_REPLAY: Quote was already used.",
    "result": {
-    "txHash": "AJu5gMv979RKdWHNYqLuv3iNuFFF3LAatJAh16LkYpov",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/AJu5gMv979RKdWHNYqLuv3iNuFFF3LAatJAh16LkYpov"
-   },
-   "layer": "contract"
+    "txHash": "HR7XFkV74bti1MSL1RHD3w9ejafY92EXikNa6inmEF9j",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/HR7XFkV74bti1MSL1RHD3w9ejafY92EXikNa6inmEF9j"
+   }
   },
   {
    "id": "venue",
-   "title": "Route a trade to the attacker's contract",
-   "how": "A signed quote whose venue is an account the owner never approved.",
+   "layer": "contract",
+   "title": "Send a swap to the attacker's contract",
+   "how": "A signed swap whose venue is an account the owner never approved.",
    "blocked": true,
-   "blockedBy": "Contract check VENUE: attacker-intentrail.testnet is not an allowed venue.",
+   "blockedBy": "Contract check VENUE: intentrail-attacker-39ae84.testnet is not an allowed venue.",
    "result": {
-    "txHash": "5TzTjicNqvssocmnifRbssSfsaMHBXKkUmPcGNZo81dv",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/5TzTjicNqvssocmnifRbssSfsaMHBXKkUmPcGNZo81dv"
-   },
-   "layer": "contract"
+    "txHash": "2uU7Hp4RywRMa25AQbP2c92WDoqNYuzkhbmXiavzGqNQ",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/2uU7Hp4RywRMa25AQbP2c92WDoqNYuzkhbmXiavzGqNQ"
+   }
+  },
+  {
+   "id": "underfill",
+   "layer": "dex",
+   "title": "Ask the pool for more than it can give",
+   "how": "A swap whose minimum output is 2% above the pool price. The contract passes it on; Ref must refuse it and the vault gets its tokens back.",
+   "blocked": true,
+   "blockedBy": "Refused at the venue. ref-finance-101.testnet said: \"E68: slippage error\". The vault was refunded and its daily spend restored.",
+   "result": {
+    "txHash": "4cayYyLuD8mBHkkQr5W1cZdDQD8M5M4Hu7oHceacp3Rw",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/4cayYyLuD8mBHkkQr5W1cZdDQD8M5M4Hu7oHceacp3Rw"
+   }
   },
   {
    "id": "honest",
-   "title": "An honest $1.20 trade, for comparison",
-   "how": "Within every limit. The agent doesn't need anyone's permission.",
+   "layer": "none",
+   "title": "An honest swap, for comparison",
+   "how": "Sell 0.3 wNEAR for USDT on Ref Finance, within every limit. The agent needs nobody's permission.",
    "blocked": false,
-   "blockedBy": "Passed every check. $1.20 sent to wrap.testnet.",
+   "blockedBy": "Ref filled it: 0.3000 wNEAR for 0.3725 USDT, paid to the vault.",
    "result": {
-    "txHash": "7hswvveZ4jNMGoE4ArQbdas3otvYJzRYJf8vcHvcqhS3",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/7hswvveZ4jNMGoE4ArQbdas3otvYJzRYJf8vcHvcqhS3"
-   },
-   "layer": "none"
+    "txHash": "8wCyrAFtKouqgFHjR5WT8djSBECwmBwKD7qqNgQPKT6F",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/8wCyrAFtKouqgFHjR5WT8djSBECwmBwKD7qqNgQPKT6F"
+   }
   }
  ]
 }
