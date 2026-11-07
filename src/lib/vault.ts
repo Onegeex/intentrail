@@ -28,7 +28,7 @@ export const REF_POOL_ID = 1084;
 export const ATTACKER_ID = process.env.ATTACKER_ID || "intentrail-attacker-39ae84.testnet";
 export const EXPLORER = "https://testnet.nearblocks.io";
 
-const RPC_URLS = (process.env.NEAR_TESTNET_RPC || "https://rpc.testnet.near.org,https://test.rpc.fastnear.com")
+const RPC_URLS = (process.env.NEAR_TESTNET_RPC || "https://test.rpc.fastnear.com,https://rpc.testnet.near.org")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -243,6 +243,9 @@ function describeError(e: unknown): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const err = e as any;
   const raw = [err?.message, err?.cause?.message].filter(Boolean).join(" ").replace(/\s*""\s*$/, "").trim();
+  if (/-429|Too Many|rate limit|DEPRECATED|ECONNRESET|fetch failed|timeout/i.test(raw)) {
+    return "The NEAR RPC provider was busy, so nothing was sent. Try again in a moment.";
+  }
   const said = raw ? ` NEAR said: "${raw.slice(0, 200)}"` : "";
   if (/does not allow method|MethodName/i.test(raw)) return `Refused by NEAR: the agent's key may only call execute().${said}`;
   if (/receiver|Receiver/i.test(raw)) return `Refused by NEAR: the agent's key only works on the vault contract.${said}`;

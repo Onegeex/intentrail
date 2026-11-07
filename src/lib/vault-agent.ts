@@ -195,7 +195,7 @@ function verdict(r: TxResult): { blocked: boolean; by: string } {
     if (s === "PendingApproval") return { blocked: true, by: `Held for the owner: ${r.outcome.detail}` };
     return { blocked: false, by: r.outcome.detail };
   }
-  if (r.protocolError) return { blocked: true, by: r.protocolError };
+  if (r.protocolError) return { blocked: !/RPC provider was busy/.test(r.protocolError), by: r.protocolError };
   return { blocked: false, by: "No outcome returned." };
 }
 
