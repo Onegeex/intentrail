@@ -18,11 +18,11 @@ export type AttackRun = { ranAt: string; priceUsd?: number; attempts: AttemptVie
 
 function Verdict({ a }: { a: AttemptView }) {
   if (!a.blocked) {
-    return <span className="rounded-full bg-proceed/15 px-3 py-1 text-sm font-semibold text-proceed">Executed</span>;
+    return <span className="justify-self-start rounded-full bg-proceed/15 px-3 py-1 text-sm font-semibold text-proceed">Executed</span>;
   }
   const byNear = !a.result.txHash;
   return (
-    <span className="rounded-full bg-danger/15 px-3 py-1 text-sm font-semibold text-danger">
+    <span className="justify-self-start rounded-full bg-danger/15 px-3 py-1 text-sm font-semibold text-danger">
       {byNear ? "Refused by NEAR" : "Refused by the contract"}
     </span>
   );
