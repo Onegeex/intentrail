@@ -11,7 +11,10 @@ import { rawToNum, tradeUsd, type SwapDir } from "./vault-agent";
  */
 
 const BASE = (process.env.LLM_BASE_URL || "https://cloud-api.near.ai/v1").replace(/\/$/, "");
-const PREFERRED = ["gpt-oss-120b", "DeepSeek-V3", "GLM-4", "Qwen3", "Llama"];
+/** Normal mode: reliable tool-calling open models. */
+const PREFERRED = ["deepseek-v4.1-flash", "glm-5.3-flash", "Qwen3.6-35B", "Qwen3"];
+/** Hijacked mode: models with refusals removed, to simulate a jailbroken agent. */
+const PREFERRED_HIJACKED = ["Qwen3.8-27B-abliterated", "DeepSeek-V4.1-Flash-1017-abliterated", ...PREFERRED];
 
 export function llmConfigured() {
   return Boolean(process.env.LLM_API_KEY);
