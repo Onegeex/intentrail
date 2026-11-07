@@ -118,6 +118,10 @@ export function VaultPanel({ initial, ownerId, worstCase }: { initial: VaultSnap
             </div>
           ))}
         </dl>
+        <p className="text-xs leading-relaxed text-ivory-dim">
+          Test token: USDT here is <span className="font-mono">usdt.itachicara.testnet</span>, a community token in a thin
+          testnet pool. Its fills show the contract working, not market prices.
+        </p>
 
         <div>
           <div className="flex items-baseline justify-between text-sm">
