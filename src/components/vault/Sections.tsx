@@ -1,4 +1,5 @@
-import { CONTRACT_SRC, CONTRACT_TESTS, REPO } from "./format";
+import drill from "@/data/drill.json";
+import { CONTRACT_SRC, CONTRACT_TESTS, EXPLORER, REPO } from "./format";
 
 export function SectionHead({ title, lede }: { title: string; lede?: React.ReactNode }) {
   return (
@@ -203,6 +204,40 @@ export function Evidence() {
           Key-leak drill
         </a>
       </p>
+    </div>
+  );
+}
+
+export function KeyLeakDrill() {
+  return (
+    <div className="space-y-4 rounded-[24px] border border-rule bg-panel-raised p-5 sm:p-7">
+      <div className="space-y-1">
+        <h3 className="font-display text-3xl font-black tracking-wide text-ivory">If the guard key leaks</h3>
+        <p className="text-sm text-ivory-dim">
+          The owner&apos;s response, run for real on <span className="font-mono">{drill.vault}</span>. Pausing and rotating
+          are instant. Turning trading back on waits out the timelock, even for the owner.
+        </p>
+      </div>
+      <ol className="divide-y divide-rule/60">
+        {drill.steps.map((s, i) => (
+          <li key={s.tx} className="grid gap-1 py-3 sm:grid-cols-[2rem_1fr_auto] sm:items-baseline sm:gap-4">
+            <span className="font-display text-2xl font-black text-caution">{i + 1}</span>
+            <div>
+              <p className="font-semibold text-ivory">{s.title}</p>
+              <p className="text-sm text-ivory-dim">{s.detail}</p>
+              <a
+                href={`${EXPLORER}/txns/${s.tx}`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-xs text-points underline decoration-points/40 underline-offset-4"
+              >
+                {s.tx.slice(0, 10)}… on NearBlocks
+              </a>
+            </div>
+            <span className={`justify-self-start font-mono text-sm ${s.result.startsWith("Refused") ? "text-danger" : "text-proceed"}`}>{s.result}</span>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

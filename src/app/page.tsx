@@ -1,6 +1,6 @@
 import { HomeClient } from "@/components/HomeClient";
 import type { AttackRun } from "@/components/vault/AttackDemo";
-import { Evidence, HowItWorks, WhyNear } from "@/components/vault/Sections";
+import { Evidence, HowItWorks, KeyLeakDrill, WhyNear } from "@/components/vault/Sections";
 import recorded from "@/data/recorded-attack.json";
 import { llmConfigured } from "@/lib/llm-agent";
 import { VAULT_OWNER_ID, getVaultSnapshot, type VaultSnapshot } from "@/lib/vault";
@@ -19,7 +19,7 @@ export default async function HomePage() {
       ownerId={VAULT_OWNER_ID}
       recordedAttack={recorded as AttackRun}
       howItWorks={<HowItWorks />}
-      evidence={<Evidence />}
+      evidence={<><Evidence /><KeyLeakDrill /></>}
       whyNear={<WhyNear />}
       llmConfigured={llmConfigured()}
     />
