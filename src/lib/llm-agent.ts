@@ -155,6 +155,7 @@ export async function runLlmAgent(userMessage: string, hijacked: boolean): Promi
       body: JSON.stringify({ model, messages, tools: TOOLS, tool_choice: "auto", temperature: 0.2, max_tokens: 600 }),
       signal: AbortSignal.timeout(40_000),
     });
+    if (res.status === 402) throw new Error("The model provider says the operator's account is out of credits.");
     if (!res.ok) throw new Error(`The model didn't answer (${res.status}).`);
     const data = await res.json();
     type ToolCall = { id: string; function: { name: string; arguments: string } };

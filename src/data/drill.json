@@ -1,9 +1,41 @@
 {
-  "vault": "intentrail-vault3-39ae84.testnet",
-  "steps": [
-    { "title": "Pause trading", "detail": "Owner turns the kill switch on. Tightening, so the contract applies it at once.", "result": "APPLIED", "tx": "E6Ydvpavxewppt4CtYkmg97q7e2FLSZFMxVyoUpKSUBd" },
-    { "title": "Rotate the guard key", "detail": "Owner installs a new guard key. Quotes signed by the old key stop verifying straight away.", "result": "Done", "tx": "DV7HK2bvEnVVaUGWJkDwHvdT8CciuF41yYftaysCPhhi" },
-    { "title": "Ask to resume, and raise the daily cap to $100", "detail": "Loosening, so the contract queues it behind the 10-minute timelock.", "result": "QUEUED", "tx": "751Nk4zQGGEzCw66hNkWJ8ipT5Wj9JjGjNgYBoZPTGaK" },
-    { "title": "Try to apply it early", "detail": "Owner tries to skip the wait.", "result": "Refused: Timelock has not passed yet", "tx": "6q4oAmck2JdPzCX8rGAfjiZcZHKjLgKU9sQtJGGKsYGC" }
-  ]
+ "vault": "intentrail-vault3-39ae84.testnet",
+ "steps": [
+  {
+   "title": "Pause trading",
+   "detail": "Owner turns the kill switch on. Tightening, so the contract applies it at once.",
+   "result": "APPLIED",
+   "tx": "E6Ydvpavxewppt4CtYkmg97q7e2FLSZFMxVyoUpKSUBd"
+  },
+  {
+   "title": "Rotate the guard key",
+   "detail": "Owner installs a new guard key. Quotes signed by the old key stop verifying straight away.",
+   "result": "Done",
+   "tx": "DV7HK2bvEnVVaUGWJkDwHvdT8CciuF41yYftaysCPhhi"
+  },
+  {
+   "title": "Ask to resume, and raise the daily cap to $100",
+   "detail": "Loosening, so the contract queues it behind the 10-minute timelock.",
+   "result": "QUEUED",
+   "tx": "751Nk4zQGGEzCw66hNkWJ8ipT5Wj9JjGjNgYBoZPTGaK"
+  },
+  {
+   "title": "Try to apply it early",
+   "detail": "Owner tries to skip the wait.",
+   "result": "Refused: Timelock has not passed yet",
+   "tx": "6q4oAmck2JdPzCX8rGAfjiZcZHKjLgKU9sQtJGGKsYGC"
+  },
+  {
+   "title": "The agent tries to trade during the pause",
+   "detail": "A normal $1.50 trade, signed with the new guard key. The vault is paused, so the contract refuses it.",
+   "result": "Refused: KILL_SWITCH",
+   "tx": "A4y58uKfTs85DSpCR29BHV3mpzuoDLaiBMYcedy7n7JS"
+  },
+  {
+   "title": "Apply it after the timelock",
+   "detail": "Ten minutes later the owner applies the queued change. Trading resumes, now with the new guard key.",
+   "result": "APPLIED",
+   "tx": "Ekw29MqryM6YNHtKCvTuRsGnkMTWWDF8ZtRkJfjJzhU1"
+  }
+ ]
 }
