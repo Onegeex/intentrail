@@ -7,6 +7,9 @@ const VAULT: &str = "vault.testnet";
 const OWNER: &str = "owner.testnet";
 const WRAP: &str = "wrap.testnet";
 const ATTACKER: &str = "attacker.testnet";
+const REF: &str = "ref-finance-101.testnet";
+const USDT: &str = "usdt.itachicara.testnet";
+const TIMELOCK: u64 = 600_000;
 
 fn acc(s: &str) -> AccountId {
     s.parse().unwrap()
@@ -27,16 +30,23 @@ fn other_pk() -> PublicKey {
 fn policy() -> Policy {
     Policy {
         kill_switch: false,
-        allowed_tokens: vec![acc(NEAR_TOKEN), acc(WRAP)],
-        allowed_venues: vec![acc(WRAP)],
+        allowed_tokens: vec![acc(NEAR_TOKEN), acc(WRAP), acc(USDT)],
+        allowed_venues: vec![acc(WRAP), acc(REF)],
         max_amount_per_trade: vec![
             (acc(NEAR_TOKEN), U128(10u128.pow(24))), // 1 NEAR
             (acc(WRAP), U128(10u128.pow(24))),
+            (acc(USDT), U128(2 * 10u128.pow(24))),
         ],
         max_trade_usd_cents: U64(500),
         daily_cap_usd_cents: U64(1_200),
         approval_above_usd_cents: U64(300),
         max_cost_bps: 100,
+        // At least 1.15 USDT per wNEAR.
+        price_floors: vec![PriceFloor {
+            token_in: acc(WRAP),
+            token_out: acc(USDT),
+            min_out_per_in_e6: U128(1_150_000),
+        }],
     }
 }
 
@@ -63,7 +73,7 @@ fn as_account(who: &str) {
 fn setup() -> GuardVault {
     as_account(OWNER);
     let pk = guard().verifying_key().to_bytes().to_vec();
-    let mut v = GuardVault::new(acc(OWNER), Base64VecU8(pk), policy());
+    let mut v = GuardVault::new(acc(OWNER), Base64VecU8(pk), policy(), U64(TIMELOCK));
     v.agent_key = Some(agent_pk());
     v
 }
@@ -77,7 +87,6 @@ fn quote(usd_cents: u64, amount: u128, nonce: u64) -> String {
         "amount_in": amount.to_string(),
         "min_amount_out": amount.to_string(),
         "venue": WRAP,
-        "msg": "",
         "usd_cents": usd_cents.to_string(),
         "cost_bps": 10,
         "nonce": nonce.to_string(),
@@ -193,12 +202,7 @@ fn unlisted_venue_is_rejected() {
     // Even a guard-signed quote can't send funds to an attacker's "venue".
     let mut v = setup();
     as_agent();
-    let q = near_sdk::serde_json::json!({
-        "vault": VAULT, "kind": "FtTransferCall", "token_in": WRAP, "token_out": NEAR_TOKEN,
-        "amount_in": TENTH.to_string(), "min_amount_out": "0", "venue": ATTACKER, "msg": "",
-        "usd_cents": "100", "cost_bps": 10, "nonce": "1", "expires_at_ms": "999999999"
-    })
-    .to_string();
+    let q = swap(TENTH, TENTH * 12 / 10, 1).replace(&format!("\"venue\":\"{}\"", REF), &format!("\"venue\":\"{}\"", ATTACKER));
     let o = v.execute(q.clone(), sign(&q));
     assert_eq!(o.check, "VENUE");
 }
@@ -251,7 +255,7 @@ fn above_threshold_waits_for_owner_then_executes() {
 fn kill_switch_stops_everything() {
     let mut v = setup();
     as_account(OWNER);
-    v.set_kill_switch(true);
+    assert_eq!(v.set_kill_switch(true), "APPLIED");
     as_agent();
     let q = quote(100, TENTH, 1);
     let o = v.execute(q.clone(), sign(&q));
@@ -305,4 +309,149 @@ fn agent_cannot_swap_its_own_key() {
     let mut v = setup();
     as_agent();
     let _ = v.set_agent_key(other_pk());
+}
+
+fn swap(amount: u128, min_out: u128, nonce: u64) -> String {
+    near_sdk::serde_json::json!({
+        "vault": VAULT,
+        "kind": { "RefSwap": { "pool_id": 1084 } },
+        "token_in": WRAP,
+        "token_out": USDT,
+        "amount_in": amount.to_string(),
+        "min_amount_out": min_out.to_string(),
+        "venue": REF,
+        "usd_cents": "100",
+        "cost_bps": 30,
+        "nonce": nonce.to_string(),
+        "expires_at_ms": "999999999",
+    })
+    .to_string()
+}
+
+fn at_time(who: &str, ms: u64) {
+    let mut b = VMContextBuilder::new();
+    b.current_account_id(acc(VAULT))
+        .predecessor_account_id(acc(who))
+        .signer_account_id(acc(who))
+        .block_timestamp(ms * 1_000_000);
+    testing_env!(b.build());
+}
+
+#[test]
+fn swap_above_the_price_floor_executes() {
+    let mut v = setup();
+    as_agent();
+    let q = swap(TENTH, TENTH * 124 / 100, 1); // 1.24 USDT per wNEAR
+    let o = v.execute(q.clone(), sign(&q));
+    assert_eq!(o.status, Status::Executed, "{}", o.detail);
+}
+
+#[test]
+fn swap_below_the_price_floor_is_refused_even_when_signed() {
+    // A leaked guard key signs a swap that accepts half the market rate.
+    let mut v = setup();
+    as_agent();
+    let q = swap(TENTH, TENTH * 62 / 100, 1);
+    let o = v.execute(q.clone(), sign(&q));
+    assert_eq!(o.check, "PRICE_FLOOR");
+}
+
+#[test]
+fn swap_without_a_floor_is_refused() {
+    let mut v = setup();
+    as_agent();
+    let q = swap(TENTH, TENTH, 1)
+        .replace(&format!("\"token_in\":\"{}\"", WRAP), "\"token_in\":\"TMP\"")
+        .replace(&format!("\"token_out\":\"{}\"", USDT), &format!("\"token_out\":\"{}\"", WRAP))
+        .replace("\"token_in\":\"TMP\"", &format!("\"token_in\":\"{}\"", USDT));
+    let o = v.execute(q.clone(), sign(&q));
+    assert_eq!(o.check, "PRICE_FLOOR");
+}
+
+#[test]
+fn swap_without_minimum_output_is_refused() {
+    let mut v = setup();
+    as_agent();
+    let q = swap(TENTH, 0, 1);
+    let o = v.execute(q.clone(), sign(&q));
+    assert_eq!(o.check, "MIN_OUTPUT");
+}
+
+#[test]
+fn wrap_must_be_one_to_one() {
+    let mut v = setup();
+    as_agent();
+    let q = quote(100, TENTH, 1).replace(&format!("\"min_amount_out\":\"{}\"", TENTH), "\"min_amount_out\":\"1\"");
+    let o = v.execute(q.clone(), sign(&q));
+    assert_eq!(o.check, "MIN_OUTPUT");
+}
+
+#[test]
+fn tightening_applies_at_once() {
+    let mut v = setup();
+    as_account(OWNER);
+    let mut p = policy();
+    p.daily_cap_usd_cents = U64(600);
+    assert_eq!(v.set_policy(p), "APPLIED");
+    assert_eq!(v.get_policy().daily_cap_usd_cents.0, 600);
+}
+
+#[test]
+fn loosening_waits_for_the_timelock() {
+    let mut v = setup();
+    as_account(OWNER);
+    let mut p = policy();
+    p.daily_cap_usd_cents = U64(1_000_000);
+    assert_eq!(v.set_policy(p), "QUEUED");
+    assert_eq!(v.get_policy().daily_cap_usd_cents.0, 1_200);
+    assert!(v.get_pending_policy().is_some());
+    at_time(OWNER, 1_000 + TIMELOCK);
+    v.apply_policy();
+    assert_eq!(v.get_policy().daily_cap_usd_cents.0, 1_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Timelock has not passed yet")]
+fn loosening_cannot_skip_the_timelock() {
+    let mut v = setup();
+    as_account(OWNER);
+    let mut p = policy();
+    p.allowed_venues.push(acc(ATTACKER));
+    v.set_policy(p);
+    at_time(OWNER, 1_000 + TIMELOCK - 1);
+    v.apply_policy();
+}
+
+#[test]
+fn lowering_a_price_floor_is_loosening() {
+    let mut v = setup();
+    as_account(OWNER);
+    let mut p = policy();
+    p.price_floors[0].min_out_per_in_e6 = U128(1);
+    assert_eq!(v.set_policy(p), "QUEUED");
+}
+
+#[test]
+fn key_leak_drill_pause_is_instant_resume_is_timelocked() {
+    let mut v = setup();
+    as_account(OWNER);
+    assert_eq!(v.set_kill_switch(true), "APPLIED");
+    // Owner rotates the guard key straight away.
+    let new_guard = SigningKey::from_bytes(&[11u8; 32]);
+    v.set_guard_key(Base64VecU8(new_guard.verifying_key().to_bytes().to_vec()));
+    // Turning trading back on waits.
+    assert_eq!(v.set_kill_switch(false), "QUEUED");
+    assert!(v.get_policy().kill_switch);
+    // Quotes from the leaked key no longer verify, even after resuming.
+    at_time(OWNER, 1_000 + TIMELOCK);
+    v.apply_policy();
+    as_agent();
+    let q = quote(100, TENTH, 1);
+    let o = v.execute(q.clone(), sign(&q));
+    assert_eq!(o.check, "GUARD_SIGNATURE");
+    let ok = Base64VecU8(new_guard.sign(q.as_bytes()).to_bytes().to_vec());
+    let q2 = quote(100, TENTH, 2);
+    let ok2 = Base64VecU8(new_guard.sign(q2.as_bytes()).to_bytes().to_vec());
+    let _ = ok;
+    assert_eq!(v.execute(q2, ok2).status, Status::Executed);
 }

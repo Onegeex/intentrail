@@ -20,6 +20,12 @@
 //!    above a threshold. A compromised guard key still can't exceed them.
 //! 5. Every trade shape returns its output to the vault. There is no
 //!    recipient field, so output can't be routed to another account.
+//! 6. Swaps carry a minimum output that the DEX enforces atomically, and the
+//!    owner sets a price floor per pair that the contract checks without
+//!    trusting the guard. A leaked guard key can lose at most the gap between
+//!    the floor and the market on a capped trade.
+//! 7. Changes that loosen the policy (raise a cap, add a token, turn trading
+//!    back on) wait for a timelock. Changes that tighten it apply at once.
 
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::store::{IterableMap, LookupSet};
@@ -45,10 +51,10 @@ pub enum TradeKind {
     Wrap,
     /// wNEAR -> NEAR: `near_withdraw` on the wrap contract (venue = token_in).
     Unwrap,
-    /// `ft_transfer_call(venue, amount, msg)` on token_in. Used for
-    /// NEAR Intents (`intents.near`) deposits and DEX swaps, which credit
-    /// the sender, i.e. the vault.
-    FtTransferCall,
+    /// A Ref Finance instant swap in one pool. The contract writes the swap
+    /// instruction itself, including `min_amount_out`; Ref sends the output
+    /// back to the sender (the vault) or reverts the whole swap.
+    RefSwap { pool_id: u64 },
 }
 
 /// A trade priced and signed by the IntentRail guard server.
@@ -62,8 +68,6 @@ pub struct Quote {
     pub amount_in: U128,
     pub min_amount_out: U128,
     pub venue: AccountId,
-    #[serde(default)]
-    pub msg: String,
     /// USD value of amount_in in cents, from the guard's price source.
     pub usd_cents: U64,
     /// Fees + price impact the guard measured from the real quote, in bps.
@@ -86,6 +90,26 @@ pub struct Policy {
     pub approval_above_usd_cents: U64,
     /// Highest fee + price impact the guard may sign for, in bps.
     pub max_cost_bps: u32,
+    /// Owner-set minimum exchange rates for swaps, checked without the guard.
+    /// A swap pair with no floor can't be traded.
+    #[serde(default)]
+    pub price_floors: Vec<PriceFloor>,
+}
+
+/// `min_amount_out * 1e6 >= amount_in * min_out_per_in_e6`, in raw units.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PriceFloor {
+    pub token_in: AccountId,
+    pub token_out: AccountId,
+    pub min_out_per_in_e6: U128,
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct PendingPolicy {
+    pub policy: Policy,
+    pub eta_ms: U64,
 }
 
 #[near(serializers = [json, borsh])]
@@ -121,8 +145,8 @@ pub struct PendingTrade {
     pub token_in: AccountId,
     pub token_out: AccountId,
     pub amount_in: U128,
+    pub min_amount_out: U128,
     pub venue: AccountId,
-    pub msg: String,
     pub usd_cents: U64,
     pub created_ms: U64,
 }
@@ -160,12 +184,15 @@ pub struct GuardVault {
     next_id: u64,
     stats: Stats,
     events: Vec<Event>,
+    /// How long a loosening policy change waits before it can apply.
+    timelock_ms: u64,
+    pending_policy: Option<PendingPolicy>,
 }
 
 #[near]
 impl GuardVault {
     #[init]
-    pub fn new(owner: AccountId, guard_key: Base64VecU8, policy: Policy) -> Self {
+    pub fn new(owner: AccountId, guard_key: Base64VecU8, policy: Policy, timelock_ms: U64) -> Self {
         require!(guard_key.0.len() == 32, "guard_key must be a 32-byte ed25519 public key");
         Self::assert_policy(&policy);
         Self {
@@ -180,6 +207,8 @@ impl GuardVault {
             next_id: 1,
             stats: Stats::default(),
             events: Vec::new(),
+            timelock_ms: timelock_ms.0,
+            pending_policy: None,
         }
     }
 
@@ -246,8 +275,8 @@ impl GuardVault {
                 token_in: q.token_in.clone(),
                 token_out: q.token_out.clone(),
                 amount_in: q.amount_in,
+                min_amount_out: q.min_amount_out,
                 venue: q.venue.clone(),
-                msg: q.msg.clone(),
                 usd_cents: q.usd_cents,
                 created_ms: U64(env::block_timestamp_ms()),
             };
@@ -263,7 +292,7 @@ impl GuardVault {
         }
 
         self.spent_today_cents += q.usd_cents.0;
-        self.dispatch(id, &q.kind, &q.token_in, q.amount_in, &q.venue, &q.msg, q.usd_cents.0);
+        self.dispatch(id, &q.kind, &q.token_in, &q.token_out, q.amount_in, q.min_amount_out, &q.venue, q.usd_cents.0);
         let detail = format!("Passed every check. ${} sent to {}.", cents(q.usd_cents.0), q.venue);
         self.log_event(id, Status::Executed, "OK", &detail, Some(&q));
         self.stats.executed += 1;
@@ -288,7 +317,7 @@ impl GuardVault {
             return Outcome { id, status: Status::Cancelled, check: "DAILY_CAP".into(), detail: "Would exceed today's cap.".into() };
         }
         self.spent_today_cents += p.usd_cents.0;
-        self.dispatch(id.0, &p.kind, &p.token_in, p.amount_in, &p.venue, &p.msg, p.usd_cents.0);
+        self.dispatch(id.0, &p.kind, &p.token_in, &p.token_out, p.amount_in, p.min_amount_out, &p.venue, p.usd_cents.0);
         self.stats.executed += 1;
         let detail = format!("Owner approved. ${} sent to {}.", cents(p.usd_cents.0), p.venue);
         self.log_event(id.0, Status::Approved, "OWNER_APPROVAL", &detail, None);
@@ -303,15 +332,45 @@ impl GuardVault {
         }
     }
 
-    pub fn set_kill_switch(&mut self, on: bool) {
+    /// Turning the kill switch on is instant. Turning it off is a loosening
+    /// change, so it waits for the timelock like any other.
+    pub fn set_kill_switch(&mut self, on: bool) -> String {
         self.assert_owner();
-        self.policy.kill_switch = on;
+        let mut p = self.policy.clone();
+        p.kill_switch = on;
+        self.set_policy(p)
     }
 
-    pub fn set_policy(&mut self, policy: Policy) {
+    /// Tightening changes apply now. Loosening changes are queued and can be
+    /// applied after `timelock_ms`. Returns "APPLIED" or "QUEUED".
+    pub fn set_policy(&mut self, policy: Policy) -> String {
         self.assert_owner();
         Self::assert_policy(&policy);
-        self.policy = policy;
+        if Self::is_no_looser(&policy, &self.policy) {
+            self.policy = policy;
+            self.pending_policy = None;
+            self.log_event(0, Status::Executed, "POLICY", "Owner tightened the policy. Applied at once.", None);
+            "APPLIED".into()
+        } else {
+            let eta = env::block_timestamp_ms() + self.timelock_ms;
+            self.pending_policy = Some(PendingPolicy { policy, eta_ms: U64(eta) });
+            let detail = format!("Owner loosened the policy. It can apply in {} minutes.", self.timelock_ms / 60_000);
+            self.log_event(0, Status::PendingApproval, "TIMELOCK", &detail, None);
+            "QUEUED".into()
+        }
+    }
+
+    pub fn apply_policy(&mut self) {
+        self.assert_owner();
+        let pp = self.pending_policy.take().unwrap_or_else(|| env::panic_str("No queued policy"));
+        require!(env::block_timestamp_ms() >= pp.eta_ms.0, "Timelock has not passed yet");
+        self.policy = pp.policy;
+        self.log_event(0, Status::Approved, "TIMELOCK", "Queued policy applied after the timelock.", None);
+    }
+
+    pub fn cancel_policy(&mut self) {
+        self.assert_owner();
+        self.pending_policy = None;
     }
 
     pub fn set_guard_key(&mut self, guard_key: Base64VecU8) {
@@ -377,11 +436,25 @@ impl GuardVault {
     #[private]
     #[allow(deprecated)]
     pub fn on_dispatched(&mut self, id: U64, usd_cents: U64) {
-        if let PromiseResult::Failed = env::promise_result(0) {
+        // ft_transfer_call reports how much the receiver kept. "0" means Ref
+        // refused the swap (for example, below min_amount_out) and refunded it.
+        let refunded = match env::promise_result(0) {
+            PromiseResult::Failed => true,
+            PromiseResult::Successful(bytes) => {
+                matches!(near_sdk::serde_json::from_slice::<U128>(&bytes), Ok(U128(0)))
+            }
+        };
+        if refunded {
             self.spent_today_cents = self.spent_today_cents.saturating_sub(usd_cents.0);
             self.stats.failed += 1;
             self.stats.executed = self.stats.executed.saturating_sub(1);
-            self.log_event(id.0, Status::Failed, "VENUE", "The venue call failed; nothing was spent.", None);
+            self.log_event(
+                id.0,
+                Status::Failed,
+                "VENUE",
+                "The venue didn't fill at the minimum output, so the tokens came back. Nothing was spent.",
+                None,
+            );
         }
     }
 
@@ -397,6 +470,12 @@ impl GuardVault {
 
     pub fn get_policy(&self) -> &Policy {
         &self.policy
+    }
+    pub fn get_pending_policy(&self) -> Option<&PendingPolicy> {
+        self.pending_policy.as_ref()
+    }
+    pub fn get_timelock_ms(&self) -> U64 {
+        U64(self.timelock_ms)
     }
     pub fn get_owner(&self) -> &AccountId {
         &self.owner
@@ -457,6 +536,27 @@ impl GuardVault {
         }
     }
 
+    /// True when `new` allows nothing that `old` didn't.
+    fn is_no_looser(new: &Policy, old: &Policy) -> bool {
+        (new.kill_switch || !old.kill_switch)
+            && new.allowed_tokens.iter().all(|t| old.allowed_tokens.contains(t))
+            && new.allowed_venues.iter().all(|v| old.allowed_venues.contains(v))
+            && new.max_amount_per_trade.iter().all(|(t, c)| {
+                old.max_amount_per_trade.iter().any(|(ot, oc)| ot == t && c.0 <= oc.0)
+            })
+            && new.max_trade_usd_cents.0 <= old.max_trade_usd_cents.0
+            && new.daily_cap_usd_cents.0 <= old.daily_cap_usd_cents.0
+            && new.approval_above_usd_cents.0 <= old.approval_above_usd_cents.0
+            && new.max_cost_bps <= old.max_cost_bps
+            && old.price_floors.iter().all(|of| {
+                new.price_floors.iter().any(|nf| {
+                    nf.token_in == of.token_in
+                        && nf.token_out == of.token_out
+                        && nf.min_out_per_in_e6.0 >= of.min_out_per_in_e6.0
+                })
+            })
+    }
+
     fn check_limits(&self, q: &Quote) -> Result<(), (&'static str, String)> {
         let p = &self.policy;
         if !p.allowed_tokens.contains(&q.token_in) || !p.allowed_tokens.contains(&q.token_out) {
@@ -472,10 +572,40 @@ impl GuardVault {
         let shape_ok = match q.kind {
             TradeKind::Wrap => q.token_in.as_str() == NEAR_TOKEN && q.token_out == q.venue,
             TradeKind::Unwrap => q.token_in == q.venue && q.token_out.as_str() == NEAR_TOKEN,
-            TradeKind::FtTransferCall => q.token_in.as_str() != NEAR_TOKEN,
+            TradeKind::RefSwap { .. } => q.token_in.as_str() != NEAR_TOKEN && q.token_out.as_str() != NEAR_TOKEN,
         };
         if !shape_ok {
             return Err(("TRADE_SHAPE", "Trade kind doesn't match its tokens and venue.".into()));
+        }
+        match q.kind {
+            TradeKind::Wrap | TradeKind::Unwrap => {
+                if q.min_amount_out != q.amount_in {
+                    return Err(("MIN_OUTPUT", "Wrapping is 1:1, so the minimum output must equal the input.".into()));
+                }
+            }
+            TradeKind::RefSwap { .. } => {
+                if q.min_amount_out.0 == 0 {
+                    return Err(("MIN_OUTPUT", "A swap must set a minimum output.".into()));
+                }
+                let floor = p
+                    .price_floors
+                    .iter()
+                    .find(|f| f.token_in == q.token_in && f.token_out == q.token_out);
+                let Some(floor) = floor else {
+                    return Err(("PRICE_FLOOR", "The owner hasn't set a price floor for this pair, so it can't be swapped.".into()));
+                };
+                let lhs = q.min_amount_out.0.checked_mul(1_000_000);
+                let rhs = q.amount_in.0.checked_mul(floor.min_out_per_in_e6.0);
+                match (lhs, rhs) {
+                    (Some(l), Some(r)) if l >= r => {}
+                    _ => {
+                        return Err((
+                            "PRICE_FLOOR",
+                            "The quote's minimum output is below the owner's price floor for this pair.".into(),
+                        ))
+                    }
+                }
+            }
         }
         let raw_cap = p
             .max_amount_per_trade
@@ -519,7 +649,17 @@ impl GuardVault {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn dispatch(&self, id: u64, kind: &TradeKind, token_in: &AccountId, amount: U128, venue: &AccountId, msg: &str, usd: u64) {
+    fn dispatch(
+        &self,
+        id: u64,
+        kind: &TradeKind,
+        token_in: &AccountId,
+        token_out: &AccountId,
+        amount: U128,
+        min_out: U128,
+        venue: &AccountId,
+        usd: u64,
+    ) {
         let call = match kind {
             TradeKind::Wrap => Promise::new(venue.clone()).function_call(
                 "near_deposit".to_string(),
@@ -533,14 +673,28 @@ impl GuardVault {
                 ONE_YOCTO,
                 GAS_FOR_CALL,
             ),
-            TradeKind::FtTransferCall => Promise::new(token_in.clone()).function_call(
-                "ft_transfer_call".to_string(),
-                near_sdk::serde_json::json!({ "receiver_id": venue, "amount": amount, "msg": msg })
-                    .to_string()
-                    .into_bytes(),
-                ONE_YOCTO,
-                GAS_FOR_CALL,
-            ),
+            TradeKind::RefSwap { pool_id } => {
+                // The contract writes the instruction; nothing here comes from the quote as free text.
+                let msg = near_sdk::serde_json::json!({
+                    "force": 0,
+                    "actions": [{
+                        "pool_id": pool_id,
+                        "token_in": token_in,
+                        "token_out": token_out,
+                        "amount_in": amount,
+                        "min_amount_out": min_out,
+                    }]
+                })
+                .to_string();
+                Promise::new(token_in.clone()).function_call(
+                    "ft_transfer_call".to_string(),
+                    near_sdk::serde_json::json!({ "receiver_id": venue, "amount": amount, "msg": msg })
+                        .to_string()
+                        .into_bytes(),
+                    ONE_YOCTO,
+                    GAS_FOR_CALL,
+                )
+            }
         };
         let _ = call.then(
             Promise::new(env::current_account_id()).function_call(
