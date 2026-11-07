@@ -19,7 +19,7 @@ import {
  * Neither key can move funds on its own. The contract decides.
  */
 
-export const VAULT_ID = process.env.VAULT_ID || "intentrail-vault4-39ae84.testnet";
+export const VAULT_ID = process.env.VAULT_ID || "intentrail-vault5-39ae84.testnet";
 export const VAULT_OWNER_ID = process.env.VAULT_OWNER_ID || "intentrail-owner-39ae84.testnet";
 export const WRAP_ID = "wrap.testnet";
 export const REF_ID = "ref-finance-101.testnet";
@@ -68,6 +68,7 @@ export type VaultPolicy = {
   max_cost_bps: number;
   price_floors?: { token_in: string; token_out: string; min_out_per_in_e6: string }[];
   exit_tokens?: string[];
+  exit_max_discount_bps?: number;
 };
 
 export type VaultEvent = {

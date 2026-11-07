@@ -14,18 +14,18 @@ The rule: funds move only when the GuardVault contract agrees. Everything off-ch
 | The guard server | Route output to an attacker | No trade has a recipient field. The contract writes the Ref Finance swap itself, which pays the sender (the vault) or reverts. Venues must be on the owner's allowlist. |
 | A bad fill or a bad pool | Fill a swap at a terrible price | The contract writes `min_amount_out` into the swap; Ref reverts below it and the tokens return to the vault, with the daily spend restored. |
 | Anyone else | Trigger trades to burn the daily cap or gas | `execute` accepts only the agent's key on the vault or the owner. The public guard API never returns signed vault quotes. |
-| The owner's key alone | Drain the vault | Withdrawals go only to the owner account, which an attacker holding the key controls. So they wait out the timelock, and a separate guardian can veto them and pause. Looser limits wait too. The owner can swap into the stablecoin at once, at a bad price if it wants, but the funds stay in the vault. |
-| The guardian's key alone | Drain or unlock the vault | The guardian can only pause and veto. It can't move funds, resume trading or loosen anything. |
-| Owner and guardian together | Drain the vault | They can, after the timelock. This is the trust root. On mainnet both should be multisigs held by different people, and the timelock should be a day. |
+| The owner's key alone | Drain the vault | Withdrawals go only to the owner account, which an attacker holding the key controls. So they wait out the timelock, and a separate guardian can veto them and pause. Looser limits wait too. The owner's instant crash exit may go at most 10% under the last guard-signed rate, so the attacker can't push the pool and dump the vault into it. Deeper exits need the guardian, or the timelock. |
+| The guardian's key alone | Drain or unlock the vault | The guardian can only pause, veto, and approve a deep exit the owner asked for. It can't move funds, start an exit, resume trading or loosen anything. |
+| Owner and guardian together | Drain the vault | They can, after the timelock, or exit at any price at once. This is the trust root. On mainnet both should be multisigs held by different people (not built yet), and the timelock should be a day. |
 | A fully compromised guard server | Lose money slowly | It can sign trades down to the owner's price floor, up to the autonomy limit per trade and the daily cap per day. The site shows the live dollar figure. |
 | An agent's self-reported data | Mark its own trade as safe | The guard API ignores fee, stop-loss, slippage and vote claims and computes them from a live NEAR Intents quote. |
 | The vault deployer | Keep a back door | The vault's only full-access key is deleted at the end of deployment (`scripts/deploy-testnet.sh`). Anyone can list its keys on-chain. |
 | Missing live data | Price a trade on stale numbers | The guard fails closed: no live price or quote means no signature. |
-| Request floods | Burn the agent's gas budget | Per-IP rate limits, plus global cooldowns on the agent and attack routes. The agent key's allowance is capped at 0.5 NEAR, and the owner can rotate the key. |
+| Request floods | Burn the agent's gas budget | Per-IP rate limits, plus global cooldowns on the agent and attack routes. The agent key's gas budget is set by the owner (3 NEAR on the demo vault, capped at 5), and the owner can rotate the key. |
 
 ## The owner
 
-The owner (`intentrail-owner-39ae84.testnet` on testnet) is the human in charge. They can tighten the policy or pause at once, loosen it only after the timelock, approve or cancel trades held above the autonomy limit, rotate the agent and guard keys, exit to the stablecoin at once, and withdraw to the owner account after the timelock. The guardian (`intentrail-guardian-39ae84.testnet`) can pause and veto anything queued, and nothing else.
+The owner (`intentrail-owner-39ae84.testnet` on testnet) is the human in charge. They can tighten the policy or pause at once, loosen it only after the timelock, approve or cancel trades held above the autonomy limit, rotate the agent and guard keys, exit to the stablecoin at once within the exit floor, and withdraw to the owner account after the timelock. The guardian (`intentrail-guardian-39ae84.testnet`) can pause, veto anything queued, and approve a deep exit the owner asked for, and nothing else.
 
 ## Secrets
 

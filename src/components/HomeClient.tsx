@@ -2,7 +2,8 @@
 
 import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { animate, useInView } from "motion/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HeroScene, type HeroEvent } from "@/components/rail/HeroScene";
 import { LiveProvider, useLive } from "@/components/rail/LiveContext";
 import { useToast } from "@/components/Toast";
@@ -15,6 +16,7 @@ import type { VaultSnapshot } from "@/lib/vault";
 
 const HEADLINE = ["Your agent can trade.", "It can't drain", "the wallet."];
 const SITE = "https://intentrail-neon.vercel.app";
+const VAULT_FALLBACK = "intentrail-vault5-39ae84.testnet";
 
 const SNIPPET = `// Send only the trade. The guard prices it itself.
 const res = await fetch("${SITE}/api/guard/check", {
@@ -100,10 +102,11 @@ function Hero({ stats, held }: { stats: VaultSnapshot["stats"] | null; held: num
           >
             {stats && (
               <div className="border-b border-rule/70 pb-3">
-                <p className="text-xs text-ivory-dim">The real vault on NEAR testnet</p>
+                <p className="text-xs text-ivory-dim">The real vault on NEAR testnet, since deploy</p>
                 <p className="mt-1 text-sm text-ivory">
-                  <span className="font-mono text-lg text-proceed">{stats.executed}</span> trades executed,{" "}
-                  <span className="font-mono text-lg text-danger">{stats.rejected}</span> refused
+                  <span className="font-mono text-lg text-proceed">{stats.executed}</span> executed ·{" "}
+                  <span className="font-mono text-lg text-danger">{stats.rejected}</span> refused ·{" "}
+                  <span className="font-mono text-lg text-caution">{stats.failed}</span> venue refunds
                 </p>
                 {held > 0 && (
                   <a href="#vault" className="mt-2 inline-flex rounded-full bg-caution px-3 py-1 text-xs font-semibold text-panel-deep">
@@ -113,18 +116,16 @@ function Hero({ stats, held }: { stats: VaultSnapshot["stats"] | null; held: num
               </div>
             )}
             <div className="mt-3 min-h-[4.5rem]" aria-live="polite">
-              {event ? (
+              {event && (
                 <motion.div key={`${event.label}-${event.detail}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
                   <p className={`font-display text-2xl font-extrabold tracking-wide ${event.cleared ? "text-proceed" : "text-danger"}`}>
                     {event.label}
                   </p>
                   <p className="text-sm text-ivory/80">{event.detail}</p>
                 </motion.div>
-              ) : (
-                <p className="text-sm text-ivory-dim">The first trade is on its way.</p>
               )}
             </div>
-            <p className="mt-2 text-xs text-ivory-dim">This scene is an illustration. The attempts below are real.</p>
+            <p className="mt-2 text-xs text-ivory-dim">The animated trains are an illustration. Everything below the fold is real.</p>
           </motion.aside>
         </div>
       </div>
@@ -132,9 +133,112 @@ function Hero({ stats, held }: { stats: VaultSnapshot["stats"] | null; held: num
   );
 }
 
+function CountUp({ to, decimals = 0, prefix = "" }: { to: number; decimals?: number; prefix?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const inView = useInView(ref, { once: true, margin: "-40px" });
+  const reduce = useReducedMotion();
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fmt = (v: number) => `${prefix}${v.toFixed(decimals)}`;
+    if (reduce || !inView) {
+      el.textContent = fmt(reduce ? to : 0);
+      if (!reduce) return;
+      return;
+    }
+    const c = animate(0, to, { duration: 1.1, ease: [0.2, 0.7, 0.1, 1], onUpdate: (v) => (el.textContent = fmt(v)) });
+    return () => c.stop();
+  }, [inView, to, decimals, prefix, reduce]);
+  return <span ref={ref}>{`${prefix}${to.toFixed(decimals)}`}</span>;
+}
+
+function ProofStrip({ attack, worstCase, vaultId, tests }: { attack: AttackRun; worstCase: WorstCase; vaultId: string; tests: number }) {
+  const refused = attack.attempts.filter((a) => a.blocked).length;
+  const tiles = [
+    { big: <CountUp to={refused} />, unit: `of ${refused} attacks refused`, note: "This run, on-chain, with transaction links", href: "#attack", tone: "text-danger" },
+    { big: <CountUp to={tests} />, unit: "contract tests passing", note: "Bypasses, floors, timelocks, guardian, exits", href: "#how", tone: "text-proceed" },
+    worstCase
+      ? { big: <CountUp to={worstCase.perDayUsd} decimals={2} prefix="$" />, unit: "a day, worst case", note: `If our guard server is hacked: ${worstCase.worstGapPct}% × $${worstCase.dailyCapUsd} cap`, href: "#how", tone: "text-caution" }
+      : { big: <span>$100</span>, unit: "daily cap", note: "Set by the owner, enforced by the contract", href: "#how", tone: "text-caution" },
+    { big: <span>1</span>, unit: "vault for every demo", note: vaultId, href: `https://testnet.nearblocks.io/address/${vaultId}`, tone: "text-points" },
+  ];
+  return (
+    <div className="relative z-10 mx-auto -mt-px max-w-6xl px-4 sm:px-6">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-b-[24px] border border-t-0 border-rule bg-rule lg:grid-cols-4">
+        {tiles.map((t, i) => (
+          <a key={i} href={t.href} className="group space-y-1 bg-panel-deep p-4 transition-colors hover:bg-panel sm:p-5">
+            <p className={`font-display text-4xl font-black leading-none tracking-wide sm:text-5xl ${t.tone}`}>{t.big}</p>
+            <p className="text-sm font-semibold text-ivory">{t.unit}</p>
+            <p className="truncate text-xs text-ivory-dim group-hover:text-ivory/80">{t.note}</p>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const CHAPTERS = [
+  ["attack", "Attacks"],
+  ["agent", "Hijack it"],
+  ["how", "How it works"],
+  ["drills", "Drills"],
+  ["vault", "Live vault"],
+  ["status", "What's real"],
+  ["api", "Intents preview"],
+] as const;
+
+function ChapterNav() {
+  const [active, setActive] = useState<string>("");
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const els = CHAPTERS.map(([id]) => document.getElementById(id)).filter(Boolean) as HTMLElement[];
+    const io = new IntersectionObserver(
+      (entries) => {
+        const vis = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (vis[0]) setActive(vis[0].target.id);
+      },
+      { rootMargin: "-30% 0px -60% 0px" },
+    );
+    els.forEach((e) => io.observe(e));
+    const onScroll = () => setShown(window.scrollY > window.innerHeight * 0.6);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      io.disconnect();
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+  return (
+    <motion.div
+      initial={false}
+      animate={{ y: shown ? 0 : -60, opacity: shown ? 1 : 0 }}
+      transition={{ duration: 0.25 }}
+      className="pointer-events-none fixed inset-x-0 top-[61px] z-40 flex justify-center px-3"
+    >
+      <nav
+        aria-label="Sections"
+        className="pointer-events-auto flex max-w-full gap-1 overflow-x-auto rounded-full border border-rule bg-panel-deep/90 p-1 shadow-[0_8px_30px_rgba(0,0,0,0.35)] backdrop-blur-md"
+      >
+        {CHAPTERS.map(([id, label]) => (
+          <a
+            key={id}
+            href={`#${id}`}
+            className={`relative whitespace-nowrap rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors sm:text-sm ${
+              active === id ? "text-panel-deep" : "text-ivory-dim hover:text-ivory"
+            }`}
+          >
+            {active === id && <motion.span layoutId="chapter-pill" className="absolute inset-0 -z-10 rounded-full bg-ivory" transition={{ type: "spring", stiffness: 400, damping: 34 }} />}
+            {label}
+          </a>
+        ))}
+      </nav>
+    </motion.div>
+  );
+}
+
 function Section({ id, title, lede, children }: { id?: string; title: string; lede?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section id={id} className="scroll-mt-24 space-y-10">
+    <section id={id} className="scroll-mt-32 space-y-10">
       <div className="max-w-3xl space-y-3">
         <h2 className="font-display text-5xl font-black leading-[0.92] tracking-wide text-ivory sm:text-6xl">{title}</h2>
         {lede && <p className="text-lg leading-relaxed text-ivory-dim">{lede}</p>}
@@ -149,13 +253,14 @@ function ApiSection() {
   return (
     <div className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
       <div className="space-y-4 text-lg leading-relaxed text-ivory-dim">
+        <p className="inline-flex rounded-full bg-points/15 px-3 py-1 text-sm font-semibold text-points">Separate from the vault</p>
         <p>
-          Other agents can use the guard as a preflight check. Send the pair and size. The guard prices the trade from a
-          live NEAR Intents 1Click quote and returns every check with its numbers.
+          A preview of how the guard will price on NEAR Intents. Any agent can send a pair and size, and the guard prices
+          it from a live mainnet 1Click quote and returns every check with its numbers.
         </p>
         <p>
-          This API prices on NEAR Intents 1Click because that&apos;s where other agents&apos; trades settle on mainnet. The
-          vault itself prices every trade on the pool it actually trades on.
+          This is not how the vault prices. The vault trades on Ref Finance testnet, and the guard prices every vault trade
+          on that same pool. Intents pricing for the vault arrives with the chain-signatures build.
         </p>
         <p>
           It ignores anything an agent says about itself, such as its fees, stop-loss or votes, and lists those fields
@@ -197,7 +302,10 @@ export function HomeClient({
   ownerId,
   recordedAttack,
   howItWorks,
-  evidence,
+  tests,
+  testCount,
+  drills,
+  status,
   whyNear,
   llmConfigured,
 }: {
@@ -207,46 +315,60 @@ export function HomeClient({
   ownerId: string;
   recordedAttack: AttackRun;
   howItWorks: React.ReactNode;
-  evidence: React.ReactNode;
+  tests: React.ReactNode;
+  testCount: number;
+  drills: React.ReactNode;
+  status: React.ReactNode;
   whyNear: React.ReactNode;
   llmConfigured: boolean;
 }) {
+  const vaultId = vault?.vaultId ?? VAULT_FALLBACK;
   return (
     <LiveProvider>
       <Hero stats={vault?.stats ?? null} held={vault?.pending.length ?? 0} />
-      <main className="mx-auto max-w-6xl space-y-24 px-4 pb-16 pt-16 sm:space-y-32 sm:px-6 sm:pt-24 overflow-x-hidden">
+      <ProofStrip attack={recordedAttack} worstCase={worstCase} vaultId={vaultId} tests={testCount} />
+      <ChapterNav />
+      <main className="mx-auto max-w-6xl space-y-24 overflow-x-hidden px-4 pb-16 pt-20 sm:space-y-32 sm:px-6 sm:pt-28">
         <Section
           id="attack"
           title="We gave the agent's key to an attacker."
-          lede="Each row is a real attempt to take money out of the vault on NEAR testnet. Three are stopped by NEAR's own access keys before they run. The rest reach the IntentRail contract, or the DEX, and are refused there."
+          lede="Eleven real attempts to take money out of the vault, and one honest trade for comparison. Each attack is stopped by one of three layers. Click any card for how it worked."
         >
           <AttackDemo recorded={recordedAttack} />
         </Section>
 
-        <div className="space-y-10">
-          {howItWorks}
-          {evidence}
-        </div>
-
         <Section
           id="agent"
           title="Hijack the agent yourself."
-          lede="A real language model, running on NEAR AI Cloud, holds the vault's agent key. It can request trades, and it can sign any transaction it likes. Try to talk it into draining the vault."
+          lede="A real language model on NEAR AI Cloud holds the vault's agent key. We use an abliterated model, one with its refusals removed, and tell it to obey: it's the worst-case agent. In this mode the guard is treated as hacked too, so it signs whatever the model asks for. Only the contract stands in the way."
         >
           <AgentChat configured={llmConfigured} recorded={recordedLlm} />
         </Section>
 
+        <div id="how" className="scroll-mt-32 space-y-10">
+          {howItWorks}
+          {tests}
+        </div>
+
+        <div id="drills" className="scroll-mt-32">
+          {drills}
+        </div>
+
         <Section
           id="vault"
           title="The vault, live"
-          lede="Everything on this panel is read from the chain. Make the agent swap and watch the contract decide."
+          lede="Everything on this panel is read from the chain now. Counters are totals since the vault was deployed, so they won't match one attack run."
         >
           <VaultPanel initial={vault} ownerId={ownerId} worstCase={worstCase} />
         </Section>
 
+        <div id="status" className="scroll-mt-32">
+          {status}
+        </div>
+
         {whyNear}
 
-        <Section id="api" title="A preflight check for any agent">
+        <Section id="api" title="Intents pricing preview">
           <ApiSection />
         </Section>
 
@@ -262,7 +384,7 @@ export function HomeClient({
             <a className="text-ivory hover:underline" href={CONTRACT_SRC}>
               Contract
             </a>
-            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vault?.vaultId ?? "intentrail-vault4-39ae84.testnet"}`}>
+            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vaultId}`}>
               Vault on NearBlocks
             </a>
             <Link className="text-ivory hover:underline" href="/mainnet">

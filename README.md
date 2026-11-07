@@ -5,13 +5,13 @@
 IntentRail is a NEAR contract that holds an AI trading agent's funds. The agent's key can only *ask*; the contract decides, using limits the agent can't change. A guard server prices every trade from live data and signs it, and the contract enforces its own hard limits even if that server is compromised.
 
 - **Live site:** https://intentrail-neon.vercel.app
-- **Vault on testnet:** [`intentrail-vault4-39ae84.testnet`](https://testnet.nearblocks.io/address/intentrail-vault4-39ae84.testnet)
-- **Contract:** [`contract/src/lib.rs`](contract/src/lib.rs) · **Tests:** [`contract/src/tests.rs`](contract/src/tests.rs) (39 passing)
+- **Vault on testnet:** [`intentrail-vault5-39ae84.testnet`](https://testnet.nearblocks.io/address/intentrail-vault5-39ae84.testnet)
+- **Contract:** [`contract/src/lib.rs`](contract/src/lib.rs) · **Tests:** [`contract/src/tests.rs`](contract/src/tests.rs) (45 passing)
 
 ## The 90-second tour
 
 1. Press **Watch an attack fail**. Real transactions go to NEAR testnet with the agent's own key or an outside account. Each result says which layer refused it: NEAR's access keys (no transaction ever exists), the IntentRail contract, or Ref Finance (minimum output). Every on-chain attempt links to NearBlocks. One honest swap goes through for comparison.
-2. **Hijack the agent yourself**: a real LLM on NEAR AI Cloud holds the agent key and a raw-transaction tool. Tell it to drain the vault and watch what NEAR and the contract say.
+2. **Hijack the agent yourself**: a real LLM on NEAR AI Cloud holds the agent key and a raw-transaction tool. We use an abliterated model (refusals removed) told to obey, the worst-case agent, and treat the guard as hacked too, so it signs whatever the model asks for. Tell it to drain the vault and watch what NEAR and the contract say.
 3. In **The vault, live**, press **Swap $1.50**: a real Ref Finance swap with a minimum output, no human needed. **Ask for $6** is above the $4 autonomy limit, so the contract holds it for the owner.
 4. Check the chain yourself: the vault has **no full-access key**. Its only key is the agent's, and it may call `execute` only.
 
@@ -68,34 +68,60 @@ Status: design, not shipped. Today the vault trades on Ref Finance testnet, and 
 
 ## Crash exit
 
-Price floors are fixed by the owner, and lowering one waits for the timelock. So that a floor can't trap the vault in a crash, the owner can always call `exit_to_stable`: an immediate swap into an exit token (the stablecoin), ignoring floors and the kill switch. The funds stay in the vault.
+Price floors are fixed by the owner, and lowering one waits for the timelock. So that a floor can't trap the vault in a crash, the owner can call `exit_to_stable`: an immediate swap into an exit token (the stablecoin), even when paused and below the floors.
+
+That exit has its own floor. Alone, the owner may go at most `exit_max_discount_bps` (10%) under the rate of the last swap the guard signed and the contract accepted, or under the price floor if there's no trade yet. Without it, an attacker holding the owner key could push the thin pool's price, then dump the vault into it: the funds would stay in the vault, but their value would leave. A deeper exit goes through `request_exit` and needs the guardian's `approve_exit`, or waits out the timelock.
+
+Floors are fixed numbers today. If the price rises, the gap to the floor widens; if it falls, the floor blocks sales (the crash exit covers that). They need re-tuning. An oracle-relative floor is designed, not built.
 
 ## Drills, run on testnet
 
+Both ran on `intentrail-vault5-39ae84.testnet`, the same vault as every other demo on the site.
+
+- **Owner key stolen**: the attacker queues a 5 NEAR withdrawal (queued), applies it at once (refused: timelock), dumps 1 wNEAR into USDT at half price (refused: `EXIT_FLOOR`). The guardian vetoes the withdrawal and pauses. The guardian can't withdraw either.
 - **Guard key leaks** (`scripts/key-leak-drill.sh`): pause (instant), rotate the guard key (instant), resume (queued behind the timelock). Old-key quotes stop verifying at once.
-- **Owner key stolen**: the attacker queues a 5 NEAR withdrawal, the immediate apply is refused by the timelock, and the guardian vetoes it and pauses. The guardian can't withdraw either.
 
 Every step links to its transaction on the site.
 
-## Use it
+## Quickstart: your own vault in three steps
 
-**Deploy your own vault in one command** (testnet; keys come from env, see the script header):
+You need [`near` CLI](https://github.com/near/near-cli-rs), [`cargo-near`](https://github.com/near/cargo-near) and Node 20+.
+
+**1. Make keys** for the vault deployer, your agent and your guard (the guard key is a raw ed25519 seed):
 
 ```bash
-VAULT_ID=my-vault.testnet OWNER_ID=me.testnet GUARDIAN_ID=friend.testnet ... npm run vault:deploy
+near account create-account fund-later use-auto-generation save-to-folder ./keys   # run three times
+node -e "const k=require('crypto').generateKeyPairSync('ed25519');console.log(k.privateKey.export({format:'der',type:'pkcs8'}).subarray(16).toString('base64'))"
 ```
 
-It creates the vault, sets your limits, installs your agent's execute-only key, registers the tokens, and deletes the vault's full-access key.
+**2. Deploy and lock the vault** in one command. It creates the vault, sets your limits (edit `POLICY` in the script), registers the tokens, installs your agent's execute-only key, and deletes the vault's full-access key:
 
-**Plug in your agent in a few lines:** see [`examples/agent-trade.ts`](examples/agent-trade.ts). Your agent asks your guard for a signed quote, then calls `execute` with its key. The contract decides.
+```bash
+VAULT_ID=my-vault.testnet OWNER_ID=me.testnet OWNER_SK=ed25519:... \
+GUARDIAN_ID=friend.testnet VAULT_DEPLOYER_PK=ed25519:... VAULT_DEPLOYER_SK=ed25519:... \
+AGENT_PK=ed25519:... GUARD_PK_B64=... npm run vault:deploy
+```
+
+**3. Plug in your agent** in a few lines: see [`examples/agent-trade.ts`](examples/agent-trade.ts). It asks your guard for a signed quote, then calls `execute` with its key. The contract decides. To run this site's guard and dashboard against your vault, set `VAULT_ID`, `GUARD_SIGNING_KEY` and `AGENT_PRIVATE_KEY` and `npm run dev`.
 
 **Get told when it needs you:** set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, or `NOTIFY_WEBHOOK_URL`, and the server messages the owner whenever a trade is held for approval. The site also shows a badge.
+
+## Built, designed, not yet
+
+| Built and running on testnet | Designed, not built | Not done yet |
+| --- | --- | --- |
+| GuardVault contract (45 tests), full-access key deleted | Mainnet: the vault signs NEAR Intents through chain signatures | A vault trade through `intents.near` |
+| Agent key limited by NEAR to `execute`, with a gas budget | Oracle-relative price floors | Owner and guardian as multisigs |
+| Guard signatures, floors, caps, replay and expiry checks | | A one-day mainnet timelock (a setting) |
+| Guardian veto and pause; timelocked withdrawals and loosening | | Automatic floor re-tuning |
+| Crash exit with a floor; deep exits need the guardian | | |
+| Contract-written Ref Finance swaps; LLM agent on NEAR AI Cloud; owner alerts | | |
 
 ## Run it
 
 ```bash
 # Contract
-cd contract && cargo test              # 39 unit tests: bypass attempts, floors, timelocks, guardian, crash exit
+cd contract && cargo test              # 45 unit tests: bypass attempts, floors, timelocks, guardian, exits
 cargo near build non-reproducible-wasm # needs cargo-near and the wasm32 target
 
 # Deploy your own vault to testnet (keys via env; see the script header)
@@ -111,7 +137,7 @@ Environment: `GUARD_SIGNING_KEY` (base64 ed25519 seed), `AGENT_PRIVATE_KEY` (`ed
 
 | Route | What it does |
 | --- | --- |
-| `POST /api/guard/check` | Preflight a trade. Returns every check, the guard's own numbers and `ignoredFields` |
+| `POST /api/guard/check` | Intents pricing preview, separate from the vault: preflights a trade on a live mainnet 1Click quote. Returns every check, the guard's own numbers and `ignoredFields` |
 | `GET /api/vault` | Live vault state from testnet: policy, keys, balances, today's spend, on-chain log |
 | `POST /api/vault/run` | The agent trades through the vault (`{"size":"small"}` executes, `"large"` waits for the owner) |
 | `POST /api/vault/attack` | Runs the bypass attempts on testnet, labelled by the layer that refused each (at most once every 90 seconds) |

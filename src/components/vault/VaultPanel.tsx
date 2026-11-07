@@ -108,9 +108,9 @@ export function VaultPanel({ initial, ownerId, worstCase }: { initial: VaultSnap
             ["NEAR", yoctoToNear(snap.balances.nearYocto, 2)],
             ["wNEAR", yoctoToNear(snap.balances.wnearYocto, 2)],
             ["USDT (test)", yoctoToNear(snap.balances.usdtRaw, 2)],
-            ["Executed", String(snap.stats.executed)],
-            ["Refused", String(snap.stats.rejected)],
-            ["Venue refunds", String(snap.stats.failed)],
+            ["Executed, since deploy", String(snap.stats.executed)],
+            ["Refused, since deploy", String(snap.stats.rejected)],
+            ["Venue refunds, since deploy", String(snap.stats.failed)],
           ].map(([k, v]) => (
             <div key={k}>
               <dt className="text-sm text-ivory-dim">{k}</dt>
@@ -196,7 +196,7 @@ export function VaultPanel({ initial, ownerId, worstCase }: { initial: VaultSnap
                 ? [["If the guard is hacked", `At most about $${worstCase.perDayUsd.toFixed(2)} a day at today's pool prices, until someone pauses`]]
                 : []),
               ...((p.exit_tokens ?? []).length
-                ? [["Crash exit", `The owner can always swap into ${(p.exit_tokens ?? []).map((t) => t.split(".")[0]).join(", ")} at once. Funds stay in the vault.`]]
+                ? [["Crash exit", `The owner can swap into ${(p.exit_tokens ?? []).map((t) => t.split(".")[0]).join(", ")} at once, at most ${(p.exit_max_discount_bps ?? 1000) / 100}% under the last guard-signed rate. Deeper needs the guardian.`]]
                 : []),
               ...(p.price_floors ?? []).map((f) => [
                 `Floor ${f.token_in.split(".")[0]} to ${f.token_out.split(".")[0]}`,

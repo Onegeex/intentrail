@@ -1,87 +1,87 @@
 {
- "guard": {
-  "title": "If the guard key leaks",
-  "lede": "The owner's response, run for real on {vault}. Pausing and rotating are instant. Turning trading back on waits out the timelock, even for the owner.",
-  "vault": "intentrail-vault3-39ae84.testnet",
-  "steps": [
-   {
-    "title": "Pause trading",
-    "detail": "Owner turns the kill switch on. Tightening, so the contract applies it at once.",
-    "result": "APPLIED",
-    "tx": "E6Ydvpavxewppt4CtYkmg97q7e2FLSZFMxVyoUpKSUBd"
-   },
-   {
-    "title": "Rotate the guard key",
-    "detail": "Owner installs a new guard key. Quotes signed by the old key stop verifying straight away.",
-    "result": "Done",
-    "tx": "DV7HK2bvEnVVaUGWJkDwHvdT8CciuF41yYftaysCPhhi"
-   },
-   {
-    "title": "Ask to resume, and raise the daily cap to $100",
-    "detail": "Loosening, so the contract queues it behind the 10-minute timelock.",
-    "result": "QUEUED",
-    "tx": "751Nk4zQGGEzCw66hNkWJ8ipT5Wj9JjGjNgYBoZPTGaK"
-   },
-   {
-    "title": "Try to apply it early",
-    "detail": "Owner tries to skip the wait.",
-    "result": "Refused: Timelock has not passed yet",
-    "tx": "6q4oAmck2JdPzCX8rGAfjiZcZHKjLgKU9sQtJGGKsYGC"
-   },
-   {
-    "title": "The agent tries to trade during the pause",
-    "detail": "A normal $1.50 trade, signed with the new guard key. The vault is paused, so the contract refuses it.",
-    "result": "Refused: KILL_SWITCH",
-    "tx": "A4y58uKfTs85DSpCR29BHV3mpzuoDLaiBMYcedy7n7JS"
-   },
-   {
-    "title": "Apply it after the timelock",
-    "detail": "Ten minutes later the owner applies the queued change. Trading resumes, now with the new guard key.",
-    "result": "APPLIED",
-    "tx": "Ekw29MqryM6YNHtKCvTuRsGnkMTWWDF8ZtRkJfjJzhU1"
-   }
-  ]
- },
  "owner": {
   "title": "If the owner key is stolen",
-  "lede": "An attacker holding the owner key tries to drain {vault}. Withdrawals wait out the timelock, and the guardian, a separate account that can never move funds, vetoes it.",
-  "vault": "intentrail-vault4-39ae84.testnet",
+  "lede": "Run for real on {vault}. An attacker holding the owner key tries to drain it, then to dump it into the stablecoin at half price. The timelock, the exit floor and the guardian stop both.",
+  "vault": "intentrail-vault5-39ae84.testnet",
   "steps": [
    {
     "title": "Attacker asks to withdraw 5 NEAR",
     "detail": "Signed with the stolen owner key. The contract queues it behind the timelock instead of paying out.",
     "result": "QUEUED",
-    "tx": "H1brSS5LZWVjPbdmD2zfJexUuAaJf5tLWgoNmcFDuPua"
+    "tx": "8B6QGgCPdEZWXpGJPrwhoTNmByVMdvijwWwCweCf2jVF"
    },
    {
     "title": "Attacker tries to take it now",
     "detail": "Same key, applying the withdrawal straight away.",
     "result": "Refused: Timelock has not passed yet",
-    "tx": "9ZopNEbakD4Y7FYJvMFzjZMu4y4LSgVTyLuqb665zqGB"
+    "tx": "Hnyqa7wvXq1W3cFqYVhYUT1M1Rg8WkhbpgbeQ3gJMbt8"
+   },
+   {
+    "title": "Attacker dumps 1 wNEAR into USDT at half price",
+    "detail": "The owner's instant crash exit, with a minimum output of 0.5 USDT per wNEAR. Alone, the owner may go at most 10% under the last guard-signed rate.",
+    "result": "Refused: EXIT_FLOOR",
+    "tx": "573MWrwuwtjavQkuSMMxmf9HRFLU5BKxmYWU9L6yAuzx"
    },
    {
     "title": "Guardian vetoes the withdrawal",
-    "detail": "The guardian sees the queued withdrawal and cancels it.",
+    "detail": "A separate account sees the queued withdrawal and cancels it.",
     "result": "Cancelled",
-    "tx": "2jqSzjE6RZAMxW1jDya4fhAKksAqAT3cJZTVvj871zPR"
+    "tx": "4wo1vWne3YkC3i3quFoCybSLdGXCk36A4y29rT32KYSV"
    },
    {
     "title": "Guardian pauses trading",
     "detail": "Instant. Only the owner can resume, and resuming waits for the timelock.",
     "result": "Paused",
-    "tx": "7spjy8Z1Z8rJFBSLHz8YHVEvHZqhdVW76y2PvVGTJnne"
+    "tx": "EbAnigoVe97143s7amaXjVjHfUtU9t6wqucvHs1uhXNo"
    },
    {
     "title": "Guardian tries to withdraw for itself",
     "detail": "A stolen guardian key is no better: it can't move funds.",
     "result": "Refused: Only the owner can do this",
-    "tx": "Fg4BSCwy75dVLk2bfBgTzR1KLJFppqG7UocZgGsKrWXK"
+    "tx": "8SUFG3AaSbUj3suGUtswpeevnK4e2soAuhQdPZmBTfRL"
+   }
+  ]
+ },
+ "guard": {
+  "title": "If the guard key leaks",
+  "lede": "The owner's response, on the same vault right after. Pausing and rotating are instant. Turning trading back on waits out the timelock, even for the owner.",
+  "vault": "intentrail-vault5-39ae84.testnet",
+  "steps": [
+   {
+    "title": "Pause trading",
+    "detail": "Owner turns the kill switch on. Tightening, so it applies at once.",
+    "result": "APPLIED",
+    "tx": "HWQxxcKMLACDqkwkWA4cwQT9ZkPGMckGoPArQpxpTHQv"
    },
    {
-    "title": "Real owner resumes after the timelock",
-    "detail": "Once the threat is dealt with (on mainnet: rotate the owner key first), the owner's queued resume applies after ten minutes. The guardian could have vetoed this too.",
+    "title": "Rotate the guard key",
+    "detail": "Owner installs a new guard key. Quotes signed by the old key stop verifying straight away.",
+    "result": "Done",
+    "tx": "5DwvH3ksB4CdeA8JrJroDYTAuGEnMxJXoHHGDv1QcM57"
+   },
+   {
+    "title": "Ask to resume",
+    "detail": "Loosening, so the contract queues it behind the 10-minute timelock.",
+    "result": "QUEUED",
+    "tx": "43MqjdxsuEfw3e3qmGcRw9Tff9URVL434wxHxA1GREJn"
+   },
+   {
+    "title": "Try to apply it early",
+    "detail": "Owner tries to skip the wait.",
+    "result": "Refused: Timelock has not passed yet",
+    "tx": "HLLdqbWZKzxfvLqtPf5vqY3VuMYYtNyTS8mDxttfFAzW"
+   },
+   {
+    "title": "The agent tries to trade during the pause",
+    "detail": "A normal $1.50 trade, signed with the new guard key. The vault is paused, so the contract refuses it.",
+    "result": "Refused: KILL_SWITCH",
+    "tx": "CVqneywSFL5T5r4iG5iQoGnh3os7T34FXTBQE26nyLiF"
+   },
+   {
+    "title": "Apply it after the timelock",
+    "detail": "Ten minutes later the owner applies the queued change. Trading resumes with the new guard key.",
     "result": "APPLIED",
-    "tx": "EnbgErRrBVxJQRbSYEDPiUR1S645Pu1fyWdfBvknpW9q"
+    "tx": "9LCgexLuPreiHXN1MfeaxSo4Je8NZEpm31CQ9sGxv4At"
    }
   ]
  }

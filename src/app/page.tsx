@@ -1,7 +1,7 @@
 import { HomeClient } from "@/components/HomeClient";
 import type { RecordedLlm } from "@/components/vault/AgentChat";
 import type { AttackRun } from "@/components/vault/AttackDemo";
-import { Evidence, HowItWorks, KeyDrills, WhyNear, type WorstCase } from "@/components/vault/Sections";
+import { Evidence, HowItWorks, KeyDrills, StatusBoard, TEST_COUNT, WhyNear, type WorstCase } from "@/components/vault/Sections";
 import recorded from "@/data/recorded-attack.json";
 import recordedLlm from "@/data/recorded-llm.json";
 import { llmConfigured } from "@/lib/llm-agent";
@@ -27,12 +27,10 @@ export default async function HomePage() {
       recordedAttack={recorded as AttackRun}
       recordedLlm={recordedLlm as RecordedLlm}
       howItWorks={<HowItWorks worstCase={worstCase} />}
-      evidence={
-        <>
-          <Evidence />
-          <KeyDrills />
-        </>
-      }
+      tests={<Evidence />}
+      testCount={TEST_COUNT}
+      drills={<KeyDrills />}
+      status={<StatusBoard />}
       whyNear={<WhyNear />}
       llmConfigured={llmConfigured()}
     />

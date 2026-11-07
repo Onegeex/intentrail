@@ -22,7 +22,7 @@ const E24 = BigInt("1000000000000000000000000");
 /** The guard accepts this much slippage below the DEX's own quote. */
 const SLIPPAGE_BPS = BigInt(50);
 
-function toRaw(n: number): bigint {
+export function toRaw(n: number): bigint {
   return (BigInt(Math.round(n * 1e6)) * E24) / BigInt(1e6);
 }
 export function rawToNum(r: bigint | string): number {
@@ -217,10 +217,12 @@ export async function worstCaseIfGuardHacked(): Promise<{
   }
   const autonomousMaxUsd = Math.min(Number(p.approval_above_usd_cents), Number(p.max_trade_usd_cents)) / 100;
   const dailyCapUsd = Number(p.daily_cap_usd_cents) / 100;
+  // Round the percentage first, so the dollar figures follow from the number on the page.
+  const pct = Number((worstGap * 100).toFixed(1));
   return {
-    perTradeUsd: Number((autonomousMaxUsd * worstGap).toFixed(2)),
-    perDayUsd: Number((dailyCapUsd * worstGap).toFixed(2)),
-    worstGapPct: Number((worstGap * 100).toFixed(1)),
+    perTradeUsd: Number(((autonomousMaxUsd * pct) / 100).toFixed(2)),
+    perDayUsd: Number(((dailyCapUsd * pct) / 100).toFixed(2)),
+    worstGapPct: pct,
     autonomousMaxUsd,
     dailyCapUsd,
   };
