@@ -28,7 +28,7 @@ export async function GET(req: Request) {
     ok: true,
     name: "IntentRail guard API",
     description:
-      "Preflight check for an agent trade. Send only the trade (pair and USD size). The guard prices it from CoinGecko and a live NEAR Intents 1Click quote, then measures fees, price impact and worst-case loss and runs its own agents. Fields an agent reports about itself are ignored. Stateful limits (daily cap, replay protection, owner approval) are enforced on-chain by the GuardVault contract, not by this API.",
+      "Preflight check for an agent trade. Send only the trade (pair and USD size). The guard prices it from CoinGecko and a live NEAR Intents 1Click quote, then measures fees, price impact and worst-case loss. It judges whether a trade is safe, not whether it's a good idea. Fields an agent reports about itself are ignored. Stateful limits (daily cap, replay protection, owner approval) are enforced on-chain by the GuardVault contract, not by this API.",
     method: "POST",
     endpoint: `${SITE}/api/guard/check`,
     body: EXAMPLE,
@@ -39,7 +39,7 @@ export async function GET(req: Request) {
       decision: "PASS | BLOCK",
       reason: "string",
       checks: [{ code: "string", ok: "boolean", detail: "string" }],
-      computed: "prices, quote, costBps, worstCaseLossUsd, votes — all computed by the guard",
+      computed: "prices, quote, costBps, worstCaseLossUsd — all computed by the guard",
       ignoredFields: "fields you sent that the guard did not trust",
     },
     examples: {

@@ -3,14 +3,16 @@ import { HARD_CAPS } from "./config";
 import { requestDryQuote } from "./intents";
 import { fetchPrices } from "./prices";
 import { getPolicy } from "./store";
-import { estimateVolatilityPct, riskAgentVote, swarmAgree, trendAgentVote } from "./swarm";
+import { estimateVolatilityPct } from "./swarm";
 import { getTokenBySymbol, isAllowlistedSymbol } from "./tokens";
-import type { AgentVote, GuardCheck, TradeProposal } from "./types";
+import type { GuardCheck, TradeProposal } from "./types";
 
 /**
  * The guard's own assessment of a trade. Nothing here comes from the agent
- * except the trade it wants (pair and size). Fees, price impact, worst-case
- * loss and the consensus votes are all computed server-side from live data.
+ * except the trade it wants (pair and size). Fees, price impact and
+ * worst-case loss are computed server-side from live data. The guard has no
+ * trading strategy: it doesn't judge whether a trade is a good idea, only
+ * whether it's safe.
  * If live data is missing, the trade is blocked.
  */
 
@@ -42,7 +44,6 @@ export type Assessment = {
     costUsd: number | null;
     volatilityPct: number | null;
     worstCaseLossUsd: number | null;
-    votes: AgentVote[];
   };
   ignoredFields: string[];
 };
@@ -70,7 +71,6 @@ export async function assessTrade(input: {
     costUsd: null,
     volatilityPct: null,
     worstCaseLossUsd: null,
-    votes: [],
   };
 
   push("KILL_SWITCH", !policy.killSwitch, policy.killSwitch ? "The operator has stopped all trading." : "Trading is on.");
@@ -167,23 +167,6 @@ export async function assessTrade(input: {
           `Worst case: cost plus a one-day move of ${vol.toFixed(1)}% is $${worst.toFixed(2)}. Limit $${policy.maxLossPerTradeUsd}.`,
         );
 
-        // The guard's own agents vote on its own numbers.
-        const trend = trendAgentVote({ side: "buy", toPrice: pOut });
-        const risk = riskAgentVote({
-          amountUsd,
-          stopLossPct: vol,
-          maxLossPerTradeUsd: policy.maxLossPerTradeUsd,
-          feeAwareOk: costOk,
-          volatilityPct: vol,
-          drawdownPct: Math.max(0, -pOut.change24hPct),
-        });
-        computed.votes = [trend, risk];
-        const agreed = swarmAgree(computed.votes);
-        push(
-          "CONSENSUS",
-          agreed,
-          agreed ? "The guard's trend and risk agents both agree." : `${[trend, risk].filter((v) => v.vote === "no").map((v) => v.reason).join(" ")}`,
-        );
       }
     }
   }
