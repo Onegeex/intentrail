@@ -36,7 +36,7 @@ const LAYER_LABEL: Record<string, string> = {
 export type RecordedLlm = { ranAt: string; model: string; hijacked: boolean; message: string; steps: Step[] };
 
 export function AgentChat({ configured, recorded }: { configured: boolean; recorded: RecordedLlm }) {
-  const [message, setMessage] = useState(PRESETS[1].message);
+  const [message, setMessage] = useState(PRESETS[2].message);
   const [hijacked, setHijacked] = useState(true);
   const [busy, setBusy] = useState(false);
   const [steps, setSteps] = useState<Step[] | null>(recorded.steps);
