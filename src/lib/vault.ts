@@ -254,6 +254,44 @@ function describeError(e: unknown): string {
   return `Refused by NEAR.${said}`;
 }
 
+/**
+ * What actually happened at the venue: read the final receipts of a trade and
+ * report the first failure (with the venue's own error) or confirm the fill.
+ */
+export async function venueResult(txHash: string): Promise<{ filled: boolean; reason: string }> {
+  for (let i = 0; i < 6; i++) {
+    try {
+      const res = await fetch(RPC_URLS[0], {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "EXPERIMENTAL_tx_status",
+          params: { tx_hash: txHash, sender_account_id: VAULT_ID, wait_until: "FINAL" },
+        }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data = await res.json();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const receipts: any[] = data?.result?.receipts_outcome ?? [];
+      if (!receipts.length) throw new Error("pending");
+      for (const ro of receipts) {
+        const failure = ro?.outcome?.status?.Failure;
+        if (failure && ro.outcome.executor_id !== VAULT_ID) {
+          const msg = JSON.stringify(failure).match(/ExecutionError\":\"(?:Smart contract panicked: )?([^"\\]+)/)?.[1] ?? "execution failed";
+          return { filled: false, reason: `${ro.outcome.executor_id} said: "${msg}"` };
+        }
+      }
+      const swapped = receipts.flatMap((ro) => ro?.outcome?.logs ?? []).find((l: string) => /^Swapped /.test(l));
+      return { filled: true, reason: swapped ?? "Filled." };
+    } catch {
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  return { filled: false, reason: "Couldn't read the final receipts." };
+}
+
 /** Agent calls execute() with a guard-signed quote. `as: "outsider"` sends it from an unrelated account. */
 /**
  * Prepaid gas counts against the agent key's allowance and NEAR doesn't give

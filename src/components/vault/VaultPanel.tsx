@@ -8,6 +8,7 @@ import { CHECK_LABEL, EXPLORER, STATUS_LABEL, centsToUsd, shortKey, timeAgo, yoc
 type RunResult = {
   intent: string;
   pricing?: string;
+  settlement?: string;
   tx: {
     txHash?: string;
     explorerUrl?: string;
@@ -244,7 +245,7 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
               >
                 {last.tx.outcome ? STATUS_LABEL[last.tx.outcome.status] ?? last.tx.outcome.status : "Not sent"}
               </p>
-              <p className="text-ivory">{last.tx.outcome?.detail ?? last.tx.protocolError}</p>
+              <p className="text-ivory">{last.settlement ?? last.tx.outcome?.detail ?? last.tx.protocolError}</p>
               {last.tx.txHash && (
                 <a
                   href={last.tx.explorerUrl}

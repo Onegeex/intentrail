@@ -122,7 +122,7 @@ async function runTool(name: string, args: Record<string, unknown>): Promise<Omi
     const kind = String(args.kind) as "wrap" | SwapDir;
     const run = await tradeUsd(usd, kind === "wrap" || kind === "to_usdt" || kind === "to_wnear" ? kind : undefined);
     const s = summarize(run.tx);
-    return { ...s, summary: `${run.intent}. ${s.summary}`, txHash: run.tx.txHash, explorerUrl: run.tx.explorerUrl };
+    return { ...s, summary: `${run.intent}. ${run.settlement ?? s.summary}`, txHash: run.tx.txHash, explorerUrl: run.tx.explorerUrl };
   }
   if (name === "send_transaction") {
     const transfer = Number(args.transfer_near);

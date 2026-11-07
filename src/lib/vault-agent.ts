@@ -12,6 +12,7 @@ import {
   newNonce,
   rpc,
   signQuote,
+  venueResult,
   type TxResult,
   type VaultQuote,
 } from "./vault";
@@ -122,7 +123,7 @@ export function buildWrapQuote(near: number, nearUsd: number, over?: Partial<Vau
   };
 }
 
-export type AgentRun = { intent: string; priceUsd: number; quote: VaultQuote; tx: TxResult; pricing?: string };
+export type AgentRun = { intent: string; priceUsd: number; quote: VaultQuote; tx: TxResult; pricing?: string; settlement?: string };
 
 /** Choose and send a trade of roughly `usd` dollars. */
 export async function tradeUsd(usd: number, prefer?: "wrap" | SwapDir): Promise<AgentRun> {
@@ -158,11 +159,18 @@ export async function tradeUsd(usd: number, prefer?: "wrap" | SwapDir): Promise<
   const quote = buildSwapQuote(rq, nearUsd);
   const s = signQuote(quote);
   const [inSym, outSym] = choice === "to_usdt" ? ["wNEAR", "USDT"] : ["USDT", "wNEAR"];
+  const tx = await agentExecute(s.quoteJson, s.signatureB64);
+  let settlement: string | undefined;
+  if (tx.outcome?.status === "Executed" && tx.txHash) {
+    const v = await venueResult(tx.txHash);
+    settlement = v.filled ? describeSwapLog(v.reason) : `The venue didn't fill it, so the vault was refunded. ${v.reason}`;
+  }
   return {
     intent: `Swap ${rawToNum(amountIn).toFixed(4)} ${inSym} for ${outSym} on Ref Finance ($${(Number(quote.usd_cents) / 100).toFixed(2)})`,
     priceUsd: nearUsd,
     quote,
-    tx: await agentExecute(s.quoteJson, s.signatureB64),
+    settlement,
+    tx,
     pricing: `Ref quoted ${rawToNum(rq.expectedOut).toFixed(4)} ${outSym} (fee and price impact ${rq.costBps} bps). The vault will accept no less than ${rawToNum(rq.minOut).toFixed(4)}.`,
   };
 }
@@ -200,17 +208,23 @@ function verdict(r: TxResult): { blocked: boolean; by: string } {
   return { blocked: false, by: "No outcome returned." };
 }
 
-async function venueOutcome(txHash: string | undefined): Promise<string | null> {
-  if (!txHash) return null;
-  // Give the callback a moment, then read the vault's own log for that trade.
-  await new Promise((r) => setTimeout(r, 2500));
-  const snap = await getVaultSnapshot();
-  const failed = snap.events.find((e) => e.status === "Failed");
-  return failed ? failed.detail : null;
+function describeSwapLog(log: string): string {
+  const m = log.match(/^Swapped (\d+) ([\w.-]+) for (\d+) ([\w.-]+)/);
+  if (!m) return log;
+  const sym = (t: string) => (t.startsWith("wrap") ? "wNEAR" : t.startsWith("usdt") ? "USDT" : t);
+  return `Ref filled it: ${rawToNum(m[1]).toFixed(4)} ${sym(m[2])} for ${rawToNum(m[3]).toFixed(4)} ${sym(m[4])}, paid to the vault.`;
 }
 
 export async function runAttackSuite(): Promise<{ priceUsd: number; attempts: Attempt[] }> {
   const nearUsd = await liveNearPrice();
+
+  // Make sure the vault holds enough wNEAR for the two swap rows to be meaningful.
+  const before = await getVaultSnapshot();
+  if (rawToNum(before.balances.wnearYocto) < 0.65) {
+    const top = buildWrapQuote(0.8, nearUsd);
+    const ts = signQuote(top);
+    await agentExecute(ts.quoteJson, ts.signatureB64, "agent", GAS.wrap);
+  }
   const attempts: Attempt[] = [];
   const add = (a: Omit<Attempt, "blocked" | "blockedBy">, override?: { blocked: boolean; by: string }) => {
     const v = override ?? verdict(a.result);
@@ -263,16 +277,21 @@ export async function runAttackSuite(): Promise<{ priceUsd: number; attempts: At
   const greedy = buildSwapQuote(rq, nearUsd, { min_amount_out: ((rq.spotOut * BigInt(102)) / BigInt(100)).toString() });
   const greedySigned = signQuote(greedy);
   const g = await agentExecute(greedySigned.quoteJson, greedySigned.signatureB64);
-  const gDetail = g.outcome?.status === "Executed" ? await venueOutcome(g.txHash) : null;
+  const gv = g.outcome?.status === "Executed" && g.txHash ? await venueResult(g.txHash) : null;
   add(
-    { id: "underfill", layer: "dex", title: "Ask the pool for more than it can give", how: "A swap whose minimum output is 2% above the pool price. The contract passes it on; Ref must refuse it.", result: g },
-    gDetail ? { blocked: true, by: `Refused by Ref Finance: ${gDetail}` } : undefined,
+    { id: "underfill", layer: "dex", title: "Ask the pool for more than it can give", how: "A swap whose minimum output is 2% above the pool price. The contract passes it on; Ref must refuse it and the vault gets its tokens back.", result: g },
+    gv ? (gv.filled ? { blocked: false, by: describeSwapLog(gv.reason) } : { blocked: true, by: `Refused at the venue. ${gv.reason} The vault was refunded and its daily spend restored.` }) : undefined,
   );
 
   // An honest swap, for comparison.
   const okq = buildSwapQuote(await quoteRef("to_usdt", toRaw(0.3)), nearUsd);
   const oks = signQuote(okq);
-  add({ id: "honest", layer: "none", title: "An honest swap, for comparison", how: `Sell 0.3 wNEAR for USDT on Ref Finance, within every limit. The agent needs nobody's permission.`, result: await agentExecute(oks.quoteJson, oks.signatureB64) });
+  const h = await agentExecute(oks.quoteJson, oks.signatureB64);
+  const hv = h.outcome?.status === "Executed" && h.txHash ? await venueResult(h.txHash) : null;
+  add(
+    { id: "honest", layer: "none", title: "An honest swap, for comparison", how: "Sell 0.3 wNEAR for USDT on Ref Finance, within every limit. The agent needs nobody's permission.", result: h },
+    hv ? (hv.filled ? { blocked: false, by: describeSwapLog(hv.reason) } : { blocked: true, by: `The venue didn't fill it. ${hv.reason}` }) : undefined,
+  );
 
   return { priceUsd: nearUsd, attempts };
 }
