@@ -1,67 +1,53 @@
-import { randomUUID } from "crypto";
-import { enforceRateLimit, jsonError, internalError } from "@/lib/api";
-import { resolveNetwork } from "@/lib/config";
+import { z } from "zod";
+import { enforceRateLimit, internalError, jsonError } from "@/lib/api";
 import { corsJson, corsPreflight, withCors } from "@/lib/cors";
-import { checkProposal } from "@/lib/guardrails";
-import type { TradeProposal } from "@/lib/types";
-import { guardCheckBodySchema } from "@/lib/validation";
+import { MAX_COST_BPS, SELF_REPORTED_FIELDS, assessTrade } from "@/lib/risk-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const EXAMPLE_SAFE = {
-  fromSymbol: "USDC",
-  toSymbol: "NEAR",
-  amountUsd: 5,
-  slippageBps: 50,
-  stopLossPct: 2,
-  feeAwareOk: true,
-  votes: [
-    { agent: "trend" as const, vote: "yes" as const, reason: "uptrend" },
-    { agent: "risk" as const, vote: "yes" as const, reason: "sized" },
-  ],
-};
+const SITE = "https://intentrail-neon.vercel.app";
 
-const CURL_SAFE = `curl -sS -X POST https://intentrail-neon.vercel.app/api/guard/check \\
-  -H 'Content-Type: application/json' \\
-  -d '${JSON.stringify(EXAMPLE_SAFE)}'`;
+const EXAMPLE = { fromSymbol: "USDC", toSymbol: "NEAR", amountUsd: 5 };
 
-const CURL_OVERCAP = `curl -sS -X POST https://intentrail-neon.vercel.app/api/guard/check \\
-  -H 'Content-Type: application/json' \\
-  -d '{"fromSymbol":"USDC","toSymbol":"NEAR","amountUsd":500,"slippageBps":50,"feeAwareOk":true}'`;
-
-const CURL_BAD_TOKEN = `curl -sS -X POST https://intentrail-neon.vercel.app/api/guard/check \\
-  -H 'Content-Type: application/json' \\
-  -d '{"fromSymbol":"USDC","toSymbol":"DOGE","amountUsd":5}'`;
+/** Only the trade itself is accepted. Anything the agent says about itself is ignored. */
+const bodySchema = z
+  .object({
+    fromSymbol: z.string().trim().min(1).max(16),
+    toSymbol: z.string().trim().min(1).max(16),
+    amountUsd: z.number().finite(),
+  })
+  .passthrough();
 
 export async function OPTIONS(req: Request) {
   return corsPreflight(req);
 }
 
-/** Usage doc for humans + agents. */
 export async function GET(req: Request) {
   return corsJson(req, {
     ok: true,
-    name: "IntentRail seatbelt API",
+    name: "IntentRail guard API",
     description:
-      "Fail-closed guardrail check. POST a proposal-like JSON body; receive allowed/blocked + reasons. CORS enabled for browser callers.",
+      "Preflight check for an agent trade. Send only the trade (pair and USD size). The guard prices it from CoinGecko and a live NEAR Intents 1Click quote, then measures fees, price impact and worst-case loss and runs its own agents. Fields an agent reports about itself are ignored. Stateful limits (daily cap, replay protection, owner approval) are enforced on-chain by the GuardVault contract, not by this API.",
     method: "POST",
-    endpoint: "https://intentrail-neon.vercel.app/api/guard/check",
-    body: EXAMPLE_SAFE,
+    endpoint: `${SITE}/api/guard/check`,
+    body: EXAMPLE,
+    ignoredFields: SELF_REPORTED_FIELDS,
+    limits: { maxCostBps: MAX_COST_BPS },
     returns: {
-      ok: true,
-      allowed: "boolean (true when decision===PASS)",
+      allowed: "boolean",
       decision: "PASS | BLOCK",
       reason: "string",
       checks: [{ code: "string", ok: "boolean", detail: "string" }],
+      computed: "prices, quote, costBps, worstCaseLossUsd, votes — all computed by the guard",
+      ignoredFields: "fields you sent that the guard did not trust",
     },
     examples: {
-      safe_allowed: CURL_SAFE,
-      over_cap_blocked: CURL_OVERCAP,
-      bad_token_blocked: CURL_BAD_TOKEN,
+      allowed: `curl -sS -X POST ${SITE}/api/guard/check -H 'Content-Type: application/json' -d '${JSON.stringify(EXAMPLE)}'`,
+      over_size: `curl -sS -X POST ${SITE}/api/guard/check -H 'Content-Type: application/json' -d '{"fromSymbol":"USDC","toSymbol":"NEAR","amountUsd":500}'`,
+      self_reporting_ignored: `curl -sS -X POST ${SITE}/api/guard/check -H 'Content-Type: application/json' -d '{"fromSymbol":"USDC","toSymbol":"NEAR","amountUsd":5,"feeAwareOk":true,"votes":[{"agent":"risk","vote":"yes"}]}'`,
     },
-    snippet:
-      'const r = await fetch("https://intentrail-neon.vercel.app/api/guard/check",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(proposal)}); const { allowed, decision, reason, checks } = await r.json();',
+    source: "https://github.com/Onegeex/intentrail",
   });
 }
 
@@ -73,57 +59,36 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return withCors(jsonError(400, "Invalid JSON — send application/json body"), req);
+    return withCors(jsonError(400, "Send a JSON body like {\"fromSymbol\":\"USDC\",\"toSymbol\":\"NEAR\",\"amountUsd\":5}"), req);
   }
-
-  const parsed = guardCheckBodySchema.safeParse(body);
+  const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return withCors(
-      jsonError(400, "Validation failed", {
-        issues: parsed.error.issues.map((i) => ({
-          path: i.path.join("."),
-          message: i.message,
-        })),
+      jsonError(400, "fromSymbol, toSymbol and amountUsd are required", {
+        issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       }),
       req,
     );
   }
 
-  const b = parsed.data;
-  const proposal: TradeProposal = {
-    id: b.id || randomUUID(),
-    createdAt: new Date().toISOString(),
-    side: b.side || "buy",
-    fromSymbol: b.fromSymbol.toUpperCase(),
-    toSymbol: b.toSymbol.toUpperCase(),
-    amountUsd: b.amountUsd,
-    amountIn: b.amountIn || String(Math.max(1, Math.round(b.amountUsd * 1e6))),
-    estimatedOut: b.estimatedOut || "0",
-    estimatedFeeUsd:
-      b.estimatedFeeUsd ?? Number(((b.amountUsd * 20) / 10_000).toFixed(4)),
-    slippageBps: b.slippageBps ?? 50,
-    stopLossPct: b.stopLossPct ?? 2,
-    trend: b.trend || "flat",
-    rationale: b.rationale || "External agent proposal",
-    feeAwareOk: b.feeAwareOk ?? true,
-    network: b.network || resolveNetwork(),
-    demo: b.demo ?? true,
-    votes: b.votes,
-    swarmAgreed:
-      b.swarmAgreed ?? (b.votes ? b.votes.every((v) => v.vote === "yes") : true),
-  };
-
   try {
-    const guard = await checkProposal(proposal);
-    const allowed = guard.decision === "PASS";
+    const a = await assessTrade({
+      fromSymbol: parsed.data.fromSymbol,
+      toSymbol: parsed.data.toSymbol,
+      amountUsd: parsed.data.amountUsd,
+      raw: parsed.data as Record<string, unknown>,
+    });
     return corsJson(req, {
       ok: true,
-      allowed,
-      blocked: !allowed,
-      decision: guard.decision,
-      reason: guard.reason,
-      checks: guard.checks,
-      proposalId: guard.proposalId,
+      allowed: a.allowed,
+      blocked: !a.allowed,
+      decision: a.decision,
+      reason: a.reason,
+      checks: a.checks,
+      computed: a.computed,
+      ignoredFields: a.ignoredFields,
+      enforcement:
+        "This is a preflight. Funds held in a GuardVault move only when the contract's own checks also pass.",
     });
   } catch (err) {
     return withCors(internalError("guard-check", err), req);
