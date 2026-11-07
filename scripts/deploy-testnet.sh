@@ -3,13 +3,15 @@
 #
 # Required env (never commit these):
 #   VAULT_ID, OWNER_ID                      vault account to create; owner account (created if CREATE_OWNER=1)
+#   GUARDIAN_ID / GUARDIAN_PK               guardian account (created if CREATE_GUARDIAN=1): can pause and veto, never move funds
 #   VAULT_DEPLOYER_PK / VAULT_DEPLOYER_SK   temporary full-access key for the vault (deleted at the end)
 #   OWNER_PK / OWNER_SK                     the human owner's key
 #   AGENT_PK                                the agent's public key (gets a function-call key on the vault)
 #   GUARD_PK_B64                            the guard server's ed25519 public key, base64
 # Optional:
 #   ATTACKER_ID / ATTACKER_PK               an outside account used by the attack demo
-#   TIMELOCK_MS                             delay for loosening changes (default 600000 = 10 min on testnet)
+#   TIMELOCK_MS                             delay for loosening changes and withdrawals (default 600000 = 10 min on testnet; use a day on mainnet)
+#   AGENT_ALLOWANCE                         agent key gas budget in yoctoNEAR (default 3 NEAR)
 set -euo pipefail
 NET="network-config testnet"
 WASM=contract/target/near/intentrail_vault.wasm
@@ -17,6 +19,7 @@ WRAP=wrap.testnet
 REF=ref-finance-101.testnet
 USDT=usdt.itachicara.testnet
 TIMELOCK_MS=${TIMELOCK_MS:-600000}
+AGENT_ALLOWANCE=${AGENT_ALLOWANCE:-3000000000000000000000000}
 
 say() { printf '\n== %s\n' "$*"; }
 owner_call() { # method json deposit
@@ -29,6 +32,9 @@ owner_call() { # method json deposit
 say "Create accounts (testnet faucet)"
 if [ "${CREATE_OWNER:-0}" = "1" ]; then
   near account create-account sponsor-by-faucet-service "$OWNER_ID" use-manually-provided-public-key "$OWNER_PK" $NET create
+fi
+if [ "${CREATE_GUARDIAN:-0}" = "1" ]; then
+  near account create-account sponsor-by-faucet-service "$GUARDIAN_ID" use-manually-provided-public-key "$GUARDIAN_PK" $NET create
 fi
 near account create-account sponsor-by-faucet-service "$VAULT_ID" use-manually-provided-public-key "$VAULT_DEPLOYER_PK" $NET create
 if [ -n "${ATTACKER_ID:-}" ]; then
@@ -45,17 +51,18 @@ POLICY=$(cat <<JSON
   "allowed_venues": ["$WRAP", "$REF"],
   "max_amount_per_trade": [["near", "3000000000000000000000000"], ["$WRAP", "3000000000000000000000000"], ["$USDT", "4000000000000000000000000"]],
   "max_trade_usd_cents": "1000",
-  "daily_cap_usd_cents": "2500",
+  "daily_cap_usd_cents": "10000",
   "approval_above_usd_cents": "400",
   "max_cost_bps": 100,
   "price_floors": [
     {"token_in": "$WRAP", "token_out": "$USDT", "min_out_per_in_e6": "1150000"},
     {"token_in": "$USDT", "token_out": "$WRAP", "min_out_per_in_e6": "750000"}
-  ]
+  ],
+  "exit_tokens": ["$USDT"]
 }
 JSON
 )
-INIT=$(printf '{"owner":"%s","guard_key":"%s","policy":%s,"timelock_ms":"%s"}' "$OWNER_ID" "$GUARD_PK_B64" "$POLICY" "$TIMELOCK_MS")
+INIT=$(printf '{"owner":"%s","guardian":"%s","guard_key":"%s","policy":%s,"timelock_ms":"%s"}' "$OWNER_ID" "$GUARDIAN_ID" "$GUARD_PK_B64" "$POLICY" "$TIMELOCK_MS")
 
 say "Deploy and initialise the vault"
 near contract deploy "$VAULT_ID" use-file "$WASM" with-init-call new json-args "$INIT" \
@@ -67,7 +74,7 @@ owner_call register_token "{\"token\":\"$USDT\"}" '0.00125 NEAR'
 owner_call register_token "{\"token\":\"$REF\"}" '0.01 NEAR'
 
 say "Owner installs the agent's function-call key (execute only)"
-owner_call set_agent_key "{\"public_key\":\"$AGENT_PK\"}" '0 NEAR'
+owner_call set_agent_key "{\"public_key\":\"$AGENT_PK\",\"allowance\":\"$AGENT_ALLOWANCE\"}" '0 NEAR'
 
 say "Delete the vault's only full-access key. From here on, only contract code moves funds."
 near account delete-keys "$VAULT_ID" public-keys "$VAULT_DEPLOYER_PK" $NET \

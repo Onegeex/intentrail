@@ -10,6 +10,7 @@ const ATTACKER: &str = "attacker.testnet";
 const REF: &str = "ref-finance-101.testnet";
 const USDT: &str = "usdt.itachicara.testnet";
 const TIMELOCK: u64 = 600_000;
+const GUARDIAN: &str = "guardian.testnet";
 
 fn acc(s: &str) -> AccountId {
     s.parse().unwrap()
@@ -47,6 +48,7 @@ fn policy() -> Policy {
             token_out: acc(USDT),
             min_out_per_in_e6: U128(1_150_000),
         }],
+        exit_tokens: vec![acc(USDT)],
     }
 }
 
@@ -73,7 +75,7 @@ fn as_account(who: &str) {
 fn setup() -> GuardVault {
     as_account(OWNER);
     let pk = guard().verifying_key().to_bytes().to_vec();
-    let mut v = GuardVault::new(acc(OWNER), Base64VecU8(pk), policy(), U64(TIMELOCK));
+    let mut v = GuardVault::new(acc(OWNER), acc(GUARDIAN), Base64VecU8(pk), policy(), U64(TIMELOCK));
     v.agent_key = Some(agent_pk());
     v
 }
@@ -289,7 +291,7 @@ fn other_key_on_vault_cannot_execute() {
 fn agent_cannot_withdraw() {
     let mut v = setup();
     as_agent();
-    let _ = v.withdraw(acc(NEAR_TOKEN), U128(TENTH));
+    v.request_withdraw(acc(NEAR_TOKEN), U128(TENTH));
 }
 
 #[test]
@@ -308,7 +310,7 @@ fn agent_cannot_change_policy() {
 fn agent_cannot_swap_its_own_key() {
     let mut v = setup();
     as_agent();
-    let _ = v.set_agent_key(other_pk());
+    let _ = v.set_agent_key(other_pk(), None);
 }
 
 fn swap(amount: u128, min_out: u128, nonce: u64) -> String {
@@ -454,4 +456,100 @@ fn key_leak_drill_pause_is_instant_resume_is_timelocked() {
     let ok2 = Base64VecU8(new_guard.sign(q2.as_bytes()).to_bytes().to_vec());
     let _ = ok;
     assert_eq!(v.execute(q2, ok2).status, Status::Executed);
+}
+
+#[test]
+fn withdrawals_wait_for_the_timelock() {
+    let mut v = setup();
+    as_account(OWNER);
+    let w = v.request_withdraw(acc(NEAR_TOKEN), U128(TENTH));
+    assert_eq!(v.get_pending_withdrawals().len(), 1);
+    at_time(OWNER, 1_000 + TIMELOCK);
+    let _ = v.apply_withdraw(w.id);
+    assert!(v.get_pending_withdrawals().is_empty());
+}
+
+#[test]
+#[should_panic(expected = "Timelock has not passed yet")]
+fn withdrawal_cannot_skip_the_timelock() {
+    let mut v = setup();
+    as_account(OWNER);
+    let w = v.request_withdraw(acc(NEAR_TOKEN), U128(TENTH));
+    at_time(OWNER, 1_000 + TIMELOCK - 1);
+    let _ = v.apply_withdraw(w.id);
+}
+
+#[test]
+fn stolen_owner_key_drain_is_vetoed_by_the_guardian() {
+    let mut v = setup();
+    as_account(OWNER); // the attacker, holding the owner key
+    let w = v.request_withdraw(acc(NEAR_TOKEN), U128(5 * TENTH));
+    as_account(GUARDIAN);
+    v.cancel_withdraw(w.id);
+    v.pause();
+    assert!(v.get_pending_withdrawals().is_empty());
+    assert!(v.get_policy().kill_switch);
+}
+
+#[test]
+#[should_panic(expected = "Only the owner can do this")]
+fn guardian_cannot_withdraw() {
+    let mut v = setup();
+    as_account(GUARDIAN);
+    v.request_withdraw(acc(NEAR_TOKEN), U128(TENTH));
+}
+
+#[test]
+#[should_panic(expected = "Only the owner can do this")]
+fn guardian_cannot_resume_trading() {
+    let mut v = setup();
+    as_account(GUARDIAN);
+    v.pause();
+    v.set_kill_switch(false);
+}
+
+#[test]
+fn guardian_can_veto_a_loosening_change() {
+    let mut v = setup();
+    as_account(OWNER);
+    let mut p = policy();
+    p.allowed_venues.push(acc(ATTACKER));
+    assert_eq!(v.set_policy(p), "QUEUED");
+    as_account(GUARDIAN);
+    v.cancel_policy();
+    assert!(v.get_pending_policy().is_none());
+}
+
+#[test]
+fn owner_can_exit_to_stable_during_a_crash() {
+    // Paused, and the market is far below the floor: the owner can still exit.
+    let mut v = setup();
+    as_account(OWNER);
+    v.set_kill_switch(true);
+    v.exit_to_stable(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(TENTH / 2));
+    assert_eq!(v.get_events().first().unwrap().check, "EXIT");
+}
+
+#[test]
+#[should_panic(expected = "token_out is not an exit token")]
+fn exit_only_into_exit_tokens() {
+    let mut v = setup();
+    as_account(OWNER);
+    v.exit_to_stable(acc(REF), 1084, acc(USDT), acc(WRAP), U128(TENTH), U128(1));
+}
+
+#[test]
+#[should_panic(expected = "Only the owner can do this")]
+fn agent_cannot_exit() {
+    let mut v = setup();
+    as_agent();
+    v.exit_to_stable(acc(REF), 1084, acc(WRAP), acc(USDT), U128(TENTH), U128(1));
+}
+
+#[test]
+#[should_panic(expected = "Agent gas budget is capped at 5 NEAR")]
+fn agent_gas_budget_is_capped() {
+    let mut v = setup();
+    as_account(OWNER);
+    let _ = v.set_agent_key(agent_pk(), Some(U128(6 * 10u128.pow(24))));
 }

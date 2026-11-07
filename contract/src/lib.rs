@@ -26,6 +26,11 @@
 //!    the floor and the market on a capped trade.
 //! 7. Changes that loosen the policy (raise a cap, add a token, turn trading
 //!    back on) wait for a timelock. Changes that tighten it apply at once.
+//! 8. Withdrawals wait for the same timelock. A separate guardian account can
+//!    pause trading and veto anything queued, but can never move funds. A
+//!    stolen owner key alone can't drain the vault before the guardian sees it.
+//! 9. In a crash the owner can always swap into an exit token (a stablecoin)
+//!    at once, ignoring price floors. The funds stay in the vault.
 
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::store::{IterableMap, LookupSet};
@@ -43,7 +48,7 @@ const GAS_FOR_SWAP: Gas = Gas::from_tgas(200);
 const GAS_FOR_CALLBACK: Gas = Gas::from_tgas(15);
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 /// Gas allowance attached to the agent key. Fees only; it can't move funds.
-const AGENT_KEY_ALLOWANCE: NearToken = NearToken::from_millinear(500);
+const DEFAULT_AGENT_ALLOWANCE: NearToken = NearToken::from_millinear(500);
 
 /// What a trade does. Each shape returns its output to the vault.
 #[near(serializers = [json, borsh])]
@@ -96,6 +101,9 @@ pub struct Policy {
     /// A swap pair with no floor can't be traded.
     #[serde(default)]
     pub price_floors: Vec<PriceFloor>,
+    /// Tokens the owner may always exit into (stablecoins), floors aside.
+    #[serde(default)]
+    pub exit_tokens: Vec<AccountId>,
 }
 
 /// `min_amount_out * 1e6 >= amount_in * min_out_per_in_e6`, in raw units.
@@ -105,6 +113,15 @@ pub struct PriceFloor {
     pub token_in: AccountId,
     pub token_out: AccountId,
     pub min_out_per_in_e6: U128,
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct PendingWithdrawal {
+    pub id: U64,
+    pub token: AccountId,
+    pub amount: U128,
+    pub eta_ms: U64,
 }
 
 #[near(serializers = [json, borsh])]
@@ -175,6 +192,8 @@ pub struct Outcome {
 #[derive(PanicOnDefault)]
 pub struct GuardVault {
     owner: AccountId,
+    /// Can pause and veto queued owner actions. Can't move funds or loosen anything.
+    guardian: AccountId,
     /// ed25519 public key (32 bytes) of the IntentRail guard server.
     guard_key: Vec<u8>,
     agent_key: Option<PublicKey>,
@@ -189,16 +208,19 @@ pub struct GuardVault {
     /// How long a loosening policy change waits before it can apply.
     timelock_ms: u64,
     pending_policy: Option<PendingPolicy>,
+    pending_withdrawals: Vec<PendingWithdrawal>,
 }
 
 #[near]
 impl GuardVault {
     #[init]
-    pub fn new(owner: AccountId, guard_key: Base64VecU8, policy: Policy, timelock_ms: U64) -> Self {
+    pub fn new(owner: AccountId, guardian: AccountId, guard_key: Base64VecU8, policy: Policy, timelock_ms: U64) -> Self {
+        require!(owner != guardian, "Owner and guardian must be different accounts");
         require!(guard_key.0.len() == 32, "guard_key must be a 32-byte ed25519 public key");
         Self::assert_policy(&policy);
         Self {
             owner,
+            guardian,
             guard_key: guard_key.0,
             agent_key: None,
             policy,
@@ -211,6 +233,7 @@ impl GuardVault {
             events: Vec::new(),
             timelock_ms: timelock_ms.0,
             pending_policy: None,
+            pending_withdrawals: Vec::new(),
         }
     }
 
@@ -370,9 +393,20 @@ impl GuardVault {
         self.log_event(0, Status::Approved, "TIMELOCK", "Queued policy applied after the timelock.", None);
     }
 
+    /// Owner or guardian can drop a queued policy change.
     pub fn cancel_policy(&mut self) {
-        self.assert_owner();
-        self.pending_policy = None;
+        self.assert_owner_or_guardian();
+        if self.pending_policy.take().is_some() {
+            self.log_event(0, Status::Cancelled, "TIMELOCK", "Queued policy change cancelled.", None);
+        }
+    }
+
+    /// Guardian (or owner) stops all trading at once. Only the owner can
+    /// resume, and resuming waits for the timelock.
+    pub fn pause(&mut self) {
+        self.assert_owner_or_guardian();
+        self.policy.kill_switch = true;
+        self.log_event(0, Status::Executed, "KILL_SWITCH", "Trading paused.", None);
     }
 
     pub fn set_guard_key(&mut self, guard_key: Base64VecU8) {
@@ -384,8 +418,11 @@ impl GuardVault {
     /// Install (or rotate) the agent's key: a function-call key on this
     /// account that can call only `execute`, with a fee allowance and no
     /// ability to transfer tokens.
-    pub fn set_agent_key(&mut self, public_key: PublicKey) -> Promise {
+    /// Re-installing the same key refreshes its gas budget.
+    pub fn set_agent_key(&mut self, public_key: PublicKey, allowance: Option<U128>) -> Promise {
         self.assert_owner();
+        let allowance = allowance.map(|a| NearToken::from_yoctonear(a.0)).unwrap_or(DEFAULT_AGENT_ALLOWANCE);
+        require!(allowance <= NearToken::from_near(5), "Agent gas budget is capped at 5 NEAR");
         let me = env::current_account_id();
         let mut p = Promise::new(me.clone());
         if let Some(old) = self.agent_key.take() {
@@ -394,27 +431,86 @@ impl GuardVault {
         self.agent_key = Some(public_key.clone());
         p.add_access_key_allowance(
             public_key,
-            near_sdk::Allowance::limited(AGENT_KEY_ALLOWANCE).unwrap(),
+            near_sdk::Allowance::limited(allowance).unwrap(),
             me,
             "execute".to_string(),
         )
     }
 
-    /// Owner can always take funds out, but only to the owner account.
-    pub fn withdraw(&mut self, token: AccountId, amount: U128) -> Promise {
+    /// Owner asks to take funds out, to the owner account only. It waits for
+    /// the timelock, so the guardian has time to veto a stolen key.
+    pub fn request_withdraw(&mut self, token: AccountId, amount: U128) -> PendingWithdrawal {
         self.assert_owner();
-        if token.as_str() == NEAR_TOKEN {
-            Promise::new(self.owner.clone()).transfer(NearToken::from_yoctonear(amount.0))
+        require!(amount.0 > 0, "Amount must be positive");
+        let id = self.take_id();
+        let w = PendingWithdrawal {
+            id: U64(id),
+            token: token.clone(),
+            amount,
+            eta_ms: U64(env::block_timestamp_ms() + self.timelock_ms),
+        };
+        self.pending_withdrawals.push(w.clone());
+        let detail = format!("Owner asked to withdraw {} of {}. It can go through in {} minutes.", amount.0, token, self.timelock_ms / 60_000);
+        self.log_event(id, Status::PendingApproval, "WITHDRAW_TIMELOCK", &detail, None);
+        w
+    }
+
+    pub fn apply_withdraw(&mut self, id: U64) -> Promise {
+        self.assert_owner();
+        let idx = self
+            .pending_withdrawals
+            .iter()
+            .position(|w| w.id == id)
+            .unwrap_or_else(|| env::panic_str("No queued withdrawal with that id"));
+        require!(env::block_timestamp_ms() >= self.pending_withdrawals[idx].eta_ms.0, "Timelock has not passed yet");
+        let w = self.pending_withdrawals.remove(idx);
+        self.log_event(id.0, Status::Approved, "WITHDRAW_TIMELOCK", "Withdrawal sent to the owner after the timelock.", None);
+        if w.token.as_str() == NEAR_TOKEN {
+            Promise::new(self.owner.clone()).transfer(NearToken::from_yoctonear(w.amount.0))
         } else {
-            Promise::new(token).function_call(
+            Promise::new(w.token).function_call(
                 "ft_transfer".to_string(),
-                near_sdk::serde_json::json!({ "receiver_id": self.owner, "amount": amount })
+                near_sdk::serde_json::json!({ "receiver_id": self.owner, "amount": w.amount })
                     .to_string()
                     .into_bytes(),
                 ONE_YOCTO,
                 GAS_FOR_CALL,
             )
         }
+    }
+
+    /// Owner or guardian can veto a queued withdrawal.
+    pub fn cancel_withdraw(&mut self, id: U64) {
+        self.assert_owner_or_guardian();
+        let before = self.pending_withdrawals.len();
+        self.pending_withdrawals.retain(|w| w.id != id);
+        if self.pending_withdrawals.len() < before {
+            self.log_event(id.0, Status::Cancelled, "WITHDRAW_TIMELOCK", "Queued withdrawal vetoed.", None);
+        }
+    }
+
+    /// Crash exit: the owner can always swap into an exit token at once,
+    /// whatever the price floors and kill switch say. Funds stay in the vault.
+    #[allow(clippy::too_many_arguments)]
+    pub fn exit_to_stable(
+        &mut self,
+        venue: AccountId,
+        pool_id: u64,
+        token_in: AccountId,
+        token_out: AccountId,
+        amount: U128,
+        min_amount_out: U128,
+    ) {
+        self.assert_owner();
+        require!(self.policy.exit_tokens.contains(&token_out), "token_out is not an exit token");
+        require!(self.policy.allowed_tokens.contains(&token_in), "token_in is not allowlisted");
+        require!(self.policy.allowed_venues.contains(&venue), "venue is not allowed");
+        require!(token_in.as_str() != NEAR_TOKEN, "Wrap NEAR first");
+        require!(min_amount_out.0 > 0, "Set a minimum output");
+        let id = self.take_id();
+        let detail = format!("Owner exited {} of {} into {}.", amount.0, token_in, token_out);
+        self.log_event(id, Status::Executed, "EXIT", &detail, None);
+        self.dispatch(id, &TradeKind::RefSwap { pool_id }, &token_in, &token_out, amount, min_amount_out, &venue, 0);
     }
 
     /// Register this vault with a token contract so it can hold that token.
@@ -473,6 +569,12 @@ impl GuardVault {
     pub fn get_policy(&self) -> &Policy {
         &self.policy
     }
+    pub fn get_guardian(&self) -> &AccountId {
+        &self.guardian
+    }
+    pub fn get_pending_withdrawals(&self) -> &Vec<PendingWithdrawal> {
+        &self.pending_withdrawals
+    }
     pub fn get_pending_policy(&self) -> Option<&PendingPolicy> {
         self.pending_policy.as_ref()
     }
@@ -514,6 +616,11 @@ impl GuardVault {
         require!(env::predecessor_account_id() == self.owner, "Only the owner can do this");
     }
 
+    fn assert_owner_or_guardian(&self) {
+        let p = env::predecessor_account_id();
+        require!(p == self.owner || p == self.guardian, "Only the owner or the guardian can do this");
+    }
+
     fn assert_agent_or_owner(&self) {
         let pred = env::predecessor_account_id();
         if pred == self.owner {
@@ -550,6 +657,7 @@ impl GuardVault {
             && new.daily_cap_usd_cents.0 <= old.daily_cap_usd_cents.0
             && new.approval_above_usd_cents.0 <= old.approval_above_usd_cents.0
             && new.max_cost_bps <= old.max_cost_bps
+            && new.exit_tokens.iter().all(|t| old.exit_tokens.contains(t))
             && old.price_floors.iter().all(|of| {
                 new.price_floors.iter().any(|nf| {
                     nf.token_in == of.token_in
