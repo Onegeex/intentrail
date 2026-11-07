@@ -49,6 +49,10 @@ export const CHECK_LABEL: Record<string, string> = {
   COST: "Fees and price impact",
   DAILY_CAP: "Daily cap",
   OWNER_APPROVAL: "Owner approval",
+  PRICE_FLOOR: "Owner's price floor",
+  MIN_OUTPUT: "Minimum output",
+  TIMELOCK: "Timelock",
+  POLICY: "Policy",
 };
 
 export const STATUS_LABEL: Record<string, string> = {

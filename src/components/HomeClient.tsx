@@ -2,16 +2,14 @@
 
 import { motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AgentPanel } from "@/components/AgentPanel";
+import { useCallback, useMemo, useState } from "react";
 import { HeroScene, type HeroEvent } from "@/components/rail/HeroScene";
 import { LiveProvider, useLive } from "@/components/rail/LiveContext";
 import { useToast } from "@/components/Toast";
+import { AgentChat } from "@/components/vault/AgentChat";
 import { AttackDemo, type AttackRun } from "@/components/vault/AttackDemo";
 import { CONTRACT_SRC, REPO } from "@/components/vault/format";
 import { VaultPanel } from "@/components/vault/VaultPanel";
-import { WalletConnect } from "@/components/WalletConnect";
-import { resetWalletCache, type NearNetwork } from "@/lib/near-wallet";
 import type { VaultSnapshot } from "@/lib/vault";
 
 const HEADLINE = ["Your agent can trade.", "It can't drain", "the wallet."];
@@ -182,83 +180,22 @@ function ApiSection() {
   );
 }
 
-function MainnetSwap({ mainnetLiveAllowed }: { mainnetLiveAllowed: boolean }) {
-  const [liveMode, setLiveMode] = useState(false);
-  const [network, setNetwork] = useState<NearNetwork>("testnet");
-  const [riskAck, setRiskAck] = useState(false);
-
-  useEffect(() => {
-    resetWalletCache();
-  }, [network]);
-  useEffect(() => {
-    if (!liveMode) {
-      setNetwork("testnet");
-      setRiskAck(false);
-    }
-  }, [liveMode]);
-
-  return (
-    <details className="group rounded-[24px] border border-rule bg-panel-raised">
-      <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-4 p-5 sm:p-7">
-        <span>
-          <span className="block font-display text-3xl font-black tracking-wide text-ivory">Try a real $1 swap on mainnet</span>
-          <span className="block text-sm text-ivory-dim">
-            Optional. Uses NEAR Intents 1Click with your own wallet. Capped at $1 a swap and $3 a day.
-          </span>
-        </span>
-        <span className="font-display text-3xl text-ivory-dim transition-transform group-open:rotate-45">+</span>
-      </summary>
-      <div className="space-y-6 border-t border-rule p-5 sm:p-7">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <WalletConnect network={network} />
-          <label className="flex items-center gap-3 text-ivory">
-            <input type="checkbox" className="h-5 w-5" checked={liveMode} onChange={(e) => setLiveMode(e.target.checked)} />
-            Use mainnet
-          </label>
-        </div>
-        {liveMode && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-sm text-ivory-dim">
-              Network
-              <select
-                className="mt-1 min-h-11 w-full rounded-xl border border-rule px-3 text-ivory"
-                value={network}
-                onChange={(e) => setNetwork(e.target.value as NearNetwork)}
-              >
-                <option value="testnet">Testnet</option>
-                <option value="mainnet" disabled={!mainnetLiveAllowed}>
-                  Mainnet{!mainnetLiveAllowed ? " (turned off by the operator)" : ""}
-                </option>
-              </select>
-            </label>
-            <label className="flex items-start gap-3 text-sm text-ivory">
-              <input type="checkbox" className="mt-1 h-5 w-5 shrink-0" checked={riskAck} onChange={(e) => setRiskAck(e.target.checked)} />
-              I understand this can move up to $1 of my funds per swap after I sign.
-            </label>
-          </div>
-        )}
-        <AgentPanel demo={false} network={network} liveMode={liveMode} riskAcknowledged={riskAck} mainnetLiveAllowed={mainnetLiveAllowed} />
-      </div>
-    </details>
-  );
-}
-
 export function HomeClient({
-  mainnetLiveAllowed,
   vault,
   ownerId,
   recordedAttack,
-  evidence,
   howItWorks,
+  evidence,
   whyNear,
+  llmConfigured,
 }: {
-  mainnetLiveAllowed: boolean;
   vault: VaultSnapshot | null;
   ownerId: string;
   recordedAttack: AttackRun;
-  evidence: React.ReactNode;
   howItWorks: React.ReactNode;
+  evidence: React.ReactNode;
   whyNear: React.ReactNode;
+  llmConfigured: boolean;
 }) {
   return (
     <LiveProvider>
@@ -267,28 +204,37 @@ export function HomeClient({
         <Section
           id="attack"
           title="We gave the agent's key to an attacker."
-          lede="Each row is a real attempt to take money out of the vault, sent to NEAR testnet with the agent's own key. Some are refused by NEAR before they run. The rest reach the contract and are refused there."
+          lede="Each row is a real attempt to take money out of the vault on NEAR testnet. Three are stopped by NEAR's own access keys before they run. The rest reach the IntentRail contract, or the DEX, and are refused there."
         >
           <AttackDemo recorded={recordedAttack} />
+        </Section>
+
+        <div className="space-y-10">
+          {howItWorks}
+          {evidence}
+        </div>
+
+        <Section
+          id="agent"
+          title="Hijack the agent yourself."
+          lede="A real language model, running on NEAR AI Cloud, holds the vault's agent key. It can request trades, and it can sign any transaction it likes. Try to talk it into draining the vault."
+        >
+          <AgentChat configured={llmConfigured} />
         </Section>
 
         <Section
           id="vault"
           title="The vault, live"
-          lede="Everything on this panel is read from the chain. Make the agent trade and watch the contract decide."
+          lede="Everything on this panel is read from the chain. Make the agent swap and watch the contract decide."
         >
           <VaultPanel initial={vault} ownerId={ownerId} />
         </Section>
 
-        {howItWorks}
         {whyNear}
-        {evidence}
 
         <Section id="api" title="A preflight check for any agent">
           <ApiSection />
         </Section>
-
-        <MainnetSwap mainnetLiveAllowed={mainnetLiveAllowed} />
 
         <footer className="flex flex-col gap-4 border-t border-rule pt-8 text-sm text-ivory-dim sm:flex-row sm:items-center sm:justify-between">
           <p>IntentRail. Built for the NEAR hackathon. MIT licensed.</p>
@@ -302,9 +248,12 @@ export function HomeClient({
             <a className="text-ivory hover:underline" href={CONTRACT_SRC}>
               Contract
             </a>
-            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vault?.vaultId ?? "intentrail-vault-39ae84.testnet"}`}>
+            <a className="text-ivory hover:underline" href={`https://testnet.nearblocks.io/address/${vault?.vaultId ?? "intentrail-vault2-39ae84.testnet"}`}>
               Vault on NearBlocks
             </a>
+            <Link className="text-ivory hover:underline" href="/mainnet">
+              $1 mainnet swap
+            </Link>
           </nav>
         </footer>
       </main>

@@ -6,88 +6,88 @@
    "id": "withdraw",
    "title": "Call withdraw() to pull funds out",
    "how": "Agent key calls the vault's owner-only withdraw method.",
-   "expected": "protocol",
    "blocked": true,
    "blockedBy": "Refused by NEAR: the agent's key may only call execute(). NEAR said: \"Access key does not allow method withdraw\"",
-   "result": {}
+   "result": {},
+   "layer": "near"
   },
   {
    "id": "token",
    "title": "Transfer wNEAR straight from the token contract",
    "how": "Agent key signs ft_transfer on wrap.testnet to an attacker account.",
-   "expected": "protocol",
    "blocked": true,
    "blockedBy": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault-39ae84.testnet does not match transaction receiver wrap.testnet\"",
-   "result": {}
+   "result": {},
+   "layer": "near"
   },
   {
    "id": "native",
    "title": "Send NEAR to an attacker",
    "how": "Agent key signs a plain NEAR transfer out of the vault.",
-   "expected": "protocol",
    "blocked": true,
    "blockedBy": "Refused by NEAR: sending tokens needs a full-access key, and the vault has none. NEAR said: \"Access key requires full access\"",
-   "result": {}
+   "result": {},
+   "layer": "near"
   },
   {
    "id": "tamper",
    "title": "Edit a signed quote to move more",
    "how": "Guard signed a $1.50 trade; the agent raises the amount before sending it.",
-   "expected": "contract",
    "blocked": true,
    "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key.",
    "result": {
     "txHash": "9hoUATqxDAytAHaYWYMLcBerxh8TU8GKHK4wEH46PWVT",
     "explorerUrl": "https://testnet.nearblocks.io/txns/9hoUATqxDAytAHaYWYMLcBerxh8TU8GKHK4wEH46PWVT"
-   }
+   },
+   "layer": "contract"
   },
   {
    "id": "guard-compromised",
    "title": "Use a stolen guard key to sign a $50 trade",
    "how": "A validly signed quote far above the vault's $10 per-trade cap.",
-   "expected": "contract",
    "blocked": true,
    "blockedBy": "Contract check SIZE: $50 is over the $10 per-trade cap.",
    "result": {
     "txHash": "88kBsqWBkLKvfqwjM3QuU982mVzKMMb76rcaYN7Sn9yK",
     "explorerUrl": "https://testnet.nearblocks.io/txns/88kBsqWBkLKvfqwjM3QuU982mVzKMMb76rcaYN7Sn9yK"
-   }
+   },
+   "layer": "contract"
   },
   {
    "id": "replay",
    "title": "Replay the same signed quote",
    "how": "Send the exact quote and signature a second time.",
-   "expected": "contract",
    "blocked": true,
    "blockedBy": "Contract check QUOTE_REPLAY: Quote was already used.",
    "result": {
     "txHash": "AJu5gMv979RKdWHNYqLuv3iNuFFF3LAatJAh16LkYpov",
     "explorerUrl": "https://testnet.nearblocks.io/txns/AJu5gMv979RKdWHNYqLuv3iNuFFF3LAatJAh16LkYpov"
-   }
+   },
+   "layer": "contract"
   },
   {
    "id": "venue",
    "title": "Route a trade to the attacker's contract",
    "how": "A signed quote whose venue is an account the owner never approved.",
-   "expected": "contract",
    "blocked": true,
    "blockedBy": "Contract check VENUE: attacker-intentrail.testnet is not an allowed venue.",
    "result": {
     "txHash": "5TzTjicNqvssocmnifRbssSfsaMHBXKkUmPcGNZo81dv",
     "explorerUrl": "https://testnet.nearblocks.io/txns/5TzTjicNqvssocmnifRbssSfsaMHBXKkUmPcGNZo81dv"
-   }
+   },
+   "layer": "contract"
   },
   {
    "id": "honest",
    "title": "An honest $1.20 trade, for comparison",
    "how": "Within every limit. The agent doesn't need anyone's permission.",
-   "expected": "executes",
    "blocked": false,
    "blockedBy": "Passed every check. $1.20 sent to wrap.testnet.",
    "result": {
     "txHash": "7hswvveZ4jNMGoE4ArQbdas3otvYJzRYJf8vcHvcqhS3",
     "explorerUrl": "https://testnet.nearblocks.io/txns/7hswvveZ4jNMGoE4ArQbdas3otvYJzRYJf8vcHvcqhS3"
-   }
+   },
+   "layer": "none"
   }
  ]
 }

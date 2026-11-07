@@ -7,6 +7,7 @@ import { CHECK_LABEL, EXPLORER, STATUS_LABEL, centsToUsd, shortKey, timeAgo, yoc
 
 type RunResult = {
   intent: string;
+  pricing?: string;
   tx: {
     txHash?: string;
     explorerUrl?: string;
@@ -98,12 +99,14 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
           <span className="text-xs text-ivory-dim">Read from testnet {timeAgo(Date.parse(snap.asOf))}</span>
         </div>
 
-        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {[
             ["NEAR", yoctoToNear(snap.balances.nearYocto, 2)],
             ["wNEAR", yoctoToNear(snap.balances.wnearYocto, 2)],
+            ["USDT (test)", yoctoToNear(snap.balances.usdtRaw, 2)],
             ["Executed", String(snap.stats.executed)],
             ["Refused", String(snap.stats.rejected)],
+            ["Venue refunds", String(snap.stats.failed)],
           ].map(([k, v]) => (
             <div key={k}>
               <dt className="text-sm text-ivory-dim">{k}</dt>
@@ -171,6 +174,14 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
               ["Per day", `Up to ${centsToUsd(p.daily_cap_usd_cents)}`],
               ["Agent alone", `Up to ${centsToUsd(p.approval_above_usd_cents)} per trade. Above that, the owner decides.`],
               ["Fees and price impact", `Up to ${p.max_cost_bps} bps`],
+              ...(p.price_floors ?? []).map((f) => [
+                `Floor ${f.token_in.split(".")[0]} to ${f.token_out.split(".")[0]}`,
+                `At least ${(Number(f.min_out_per_in_e6) / 1e6).toFixed(2)} per unit in, checked by the contract itself`,
+              ]),
+              [
+                "Loosening a limit",
+                `Waits ${Math.round(snap.timelockMs / 60_000)} minutes. Tightening applies at once.`,
+              ],
             ].map(([k, v]) => (
               <div key={k} className="grid gap-1 py-2 sm:grid-cols-[150px_1fr]">
                 <dt className="text-ivory-dim">{k}</dt>
@@ -186,8 +197,8 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
         <div className="space-y-4 rounded-[24px] border border-rule bg-panel-raised p-5 sm:p-7">
           <h3 className="font-display text-3xl font-black tracking-wide text-ivory">Make the agent trade</h3>
           <p className="text-sm text-ivory-dim">
-            The guard prices the trade from the live NEAR price and signs it. The agent sends it with its own key. The
-            contract decides. On testnet the vault trades NEAR and wNEAR through wrap.testnet.
+            The guard prices the trade from the Ref Finance pool and the live NEAR price, and signs it with a minimum
+            output. The agent sends it with its own key. The contract decides, and Ref fills it or refunds it.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             <motion.button
@@ -198,7 +209,7 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
               className="min-h-16 rounded-2xl bg-ivory px-4 py-3 text-left text-panel-deep disabled:opacity-60"
             >
               <span className="block font-display text-2xl font-black tracking-wide">
-                {busy === "small" ? "Trading…" : "Trade $1.50"}
+                {busy === "small" ? "Trading…" : "Swap $1.50"}
               </span>
               <span className="block text-sm">Under $4, so the agent decides alone</span>
             </motion.button>
@@ -225,6 +236,7 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
               aria-live="polite"
             >
               <p className="text-ivory-dim">{last.intent}</p>
+              {last.pricing && <p className="mt-1 text-xs text-ivory-dim">{last.pricing}</p>}
               <p
                 className={`mt-1 font-display text-2xl font-extrabold tracking-wide ${
                   STATUS_TONE[last.tx.outcome?.status ?? "Rejected"]
@@ -244,6 +256,15 @@ export function VaultPanel({ initial, ownerId }: { initial: VaultSnapshot | null
                 </a>
               )}
             </motion.div>
+          )}
+          {snap.pendingPolicy && (
+            <div className="rounded-2xl border border-rule bg-panel-deep p-4 text-sm text-ivory">
+              <p className="font-semibold">A loosened policy is waiting out the timelock</p>
+              <p className="mt-1 text-ivory-dim">
+                It can apply from {new Date(Number(snap.pendingPolicy.eta_ms)).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC.
+                Until then the current limits hold.
+              </p>
+            </div>
           )}
           {snap.pending.length > 0 && (
             <div className="rounded-2xl border border-caution/40 bg-caution/10 p-4 text-sm text-ivory">

@@ -4,11 +4,13 @@ import { motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
 import { EXPLORER } from "./format";
 
+export type Layer = "near" | "contract" | "dex" | "none";
+
 export type AttemptView = {
   id: string;
+  layer: Layer;
   title: string;
   how: string;
-  expected: "protocol" | "contract" | "executes";
   blocked: boolean;
   blockedBy: string;
   result: { txHash?: string; explorerUrl?: string };
@@ -16,16 +18,16 @@ export type AttemptView = {
 
 export type AttackRun = { ranAt: string; priceUsd?: number; attempts: AttemptView[] };
 
-function Verdict({ a }: { a: AttemptView }) {
-  if (!a.blocked) {
-    return <span className="justify-self-start rounded-full bg-proceed/15 px-3 py-1 text-sm font-semibold text-proceed">Executed</span>;
-  }
-  const byNear = !a.result.txHash;
-  return (
-    <span className="justify-self-start rounded-full bg-danger/15 px-3 py-1 text-sm font-semibold text-danger">
-      {byNear ? "Refused by NEAR" : "Refused by the contract"}
-    </span>
-  );
+const LAYER: Record<Layer, { label: string; tone: string }> = {
+  near: { label: "Refused by NEAR's access keys", tone: "bg-points/15 text-points" },
+  contract: { label: "Refused by the IntentRail contract", tone: "bg-danger/15 text-danger" },
+  dex: { label: "Refused by Ref Finance", tone: "bg-caution/15 text-caution" },
+  none: { label: "Executed", tone: "bg-proceed/15 text-proceed" },
+};
+
+function layerOf(a: AttemptView): Layer {
+  if (!a.blocked) return "none";
+  return a.layer === "none" ? "contract" : a.layer;
 }
 
 export function AttackDemo({ recorded }: { recorded: AttackRun }) {
@@ -56,8 +58,7 @@ export function AttackDemo({ recorded }: { recorded: AttackRun }) {
     }
   }
 
-  const refused = run.attempts.filter((a) => a.blocked).length;
-  const attacks = run.attempts.filter((a) => a.expected !== "executes").length;
+  const count = (l: Layer) => run.attempts.filter((a) => layerOf(a) === l).length;
   const when = new Date(run.ranAt).toLocaleString("en-GB", {
     day: "numeric",
     month: "short",
@@ -68,62 +69,75 @@ export function AttackDemo({ recorded }: { recorded: AttackRun }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <p className="text-ivory-dim">
-          {live ? "Live run" : "Recorded run"}, {when} UTC, on NEAR testnet.{" "}
-          <span className="text-ivory">
-            {refused} of {attacks} attacks refused
-          </span>
-          , then one honest trade went through.
-        </p>
+      <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
+        <div className="space-y-3">
+          <p className="text-ivory-dim">
+            {live ? "Live run" : "Recorded run"}, {when} UTC, on NEAR testnet. {run.attempts.length} transactions signed with
+            the agent&apos;s own key or an outside account.
+          </p>
+          <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+            {(["near", "contract", "dex", "none"] as Layer[]).map((l) =>
+              count(l) ? (
+                <div key={l} className="flex items-baseline gap-2">
+                  <dt className="font-mono text-2xl text-ivory">{count(l)}</dt>
+                  <dd className="text-ivory-dim">{l === "none" ? "honest trade executed" : LAYER[l].label.replace("Refused by ", "refused by ")}</dd>
+                </div>
+              ) : null,
+            )}
+          </dl>
+        </div>
         <motion.button
           type="button"
           onClick={() => void runLive()}
           disabled={busy}
           whileTap={{ scale: 0.97 }}
-          className="min-h-12 shrink-0 rounded-full bg-ivory px-6 font-display text-xl font-black tracking-wide text-panel-deep disabled:opacity-60"
+          className="min-h-12 rounded-full bg-ivory px-6 font-display text-xl font-black tracking-wide text-panel-deep disabled:opacity-60"
         >
           {busy ? "Running on testnet…" : "Run it again, live"}
         </motion.button>
       </div>
       {busy && (
         <p className="text-sm text-ivory-dim" aria-live="polite">
-          Sending 8 transactions to NEAR testnet with the agent&apos;s own key. This takes about a minute.
+          Sending the transactions to NEAR testnet. This takes about a minute.
         </p>
       )}
       {err && <p className="text-sm text-caution">{err}</p>}
 
       <ol key={revealKey} className="divide-y divide-rule/70 overflow-hidden rounded-[24px] border border-rule bg-panel-deep">
-        {run.attempts.map((a, i) => (
-          <motion.li
-            key={a.id}
-            initial={reduce || revealKey === 0 ? false : { opacity: 0, x: -12 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.3, delay: i * 0.18 }}
-            className="grid gap-3 p-4 sm:grid-cols-[1fr_auto] sm:items-start sm:p-5"
-          >
-            <div className="space-y-1.5">
-              <p className="font-display text-2xl font-extrabold tracking-wide text-ivory">{a.title}</p>
-              <p className="text-sm text-ivory-dim">{a.how}</p>
-              <p className={`text-sm ${a.blocked ? "text-ivory" : "text-proceed"}`}>{a.blockedBy}</p>
-              {a.result.txHash ? (
-                <a
-                  href={a.result.explorerUrl ?? `${EXPLORER}/txns/${a.result.txHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex min-h-9 items-center font-mono text-xs text-points underline decoration-points/40 underline-offset-4"
-                >
-                  Transaction {a.result.txHash.slice(0, 10)}… on NearBlocks
-                </a>
-              ) : (
-                <p className="text-xs text-ivory-dim">
-                  NEAR rejected the transaction before it ran, so there&apos;s nothing on-chain to link.
-                </p>
-              )}
-            </div>
-            <Verdict a={a} />
-          </motion.li>
-        ))}
+        {run.attempts.map((a, i) => {
+          const l = layerOf(a);
+          return (
+            <motion.li
+              key={a.id}
+              initial={reduce || revealKey === 0 ? false : { opacity: 0, x: -12 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.3, delay: i * 0.15 }}
+              className="grid gap-3 p-4 sm:grid-cols-[1fr_auto] sm:items-start sm:p-5"
+            >
+              <div className="space-y-1.5">
+                <p className="font-display text-2xl font-extrabold tracking-wide text-ivory">{a.title}</p>
+                <p className="text-sm text-ivory-dim">{a.how}</p>
+                <p className={`text-sm ${a.blocked ? "text-ivory" : "text-proceed"}`}>{a.blockedBy}</p>
+                {a.result.txHash ? (
+                  <a
+                    href={a.result.explorerUrl ?? `${EXPLORER}/txns/${a.result.txHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-9 items-center font-mono text-xs text-points underline decoration-points/40 underline-offset-4"
+                  >
+                    Transaction {a.result.txHash.slice(0, 10)}… on NearBlocks
+                  </a>
+                ) : (
+                  <p className="text-xs text-ivory-dim">
+                    No transaction hash: NEAR validates the key before a transaction exists, so a refused one never
+                    reaches the chain. The quoted error is NEAR&apos;s own.
+                  </p>
+                )}
+              </div>
+              <span className={`justify-self-start rounded-full px-3 py-1 text-sm font-semibold ${LAYER[l].tone}`}>{LAYER[l].label}</span>
+            </motion.li>
+          );
+        })}
       </ol>
     </div>
   );

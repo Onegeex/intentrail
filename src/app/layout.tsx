@@ -12,9 +12,9 @@ import "./globals.css";
    Overpass (derived from Highway Gothic). Families are set in globals.css. */
 
 export const metadata: Metadata = {
-  title: "IntentRail — seatbelt for AI agents that touch money",
+  title: "IntentRail — your agent can trade, it can't drain the wallet",
   description:
-    "Fail-closed guardrails for agent trades on NEAR Intents. Every proposal runs past ten signals before it can move funds.",
+    "A NEAR contract holds your AI agent's trading money. The agent can only ask; the contract decides, using limits the agent can't change.",
 };
 
 export default function RootLayout({

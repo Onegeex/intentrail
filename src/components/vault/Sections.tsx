@@ -1,4 +1,3 @@
-import type { BacktestResult } from "@/lib/types";
 import { CONTRACT_SRC, CONTRACT_TESTS, REPO } from "./format";
 
 export function SectionHead({ title, lede }: { title: string; lede?: React.ReactNode }) {
@@ -14,22 +13,22 @@ const STEPS = [
   {
     who: "Agent",
     title: "Proposes a trade",
-    body: "Pair and size only. Anything it says about its own fees, stop-loss or confidence is ignored.",
+    body: "Pair and size only. Anything it says about its own fees, stop-loss or confidence is ignored. It can be an LLM, a script, or a hijacked version of either.",
   },
   {
     who: "Guard server",
     title: "Prices it and signs it",
-    body: "Live CoinGecko price and a live NEAR Intents 1Click quote. It measures fees, price impact and worst-case loss, runs its own trend and risk agents, and signs a quote bound to this vault, single-use, valid for two minutes.",
+    body: "It quotes the trade on the DEX pool itself, measures fees and price impact, sets a minimum output 0.5% under the quote, values it with the live NEAR price, and signs it for this vault only, once, for two minutes. It has no trading strategy.",
   },
   {
     who: "GuardVault contract",
     title: "Checks its own limits",
-    body: "Signature, freshness, replay, token and venue allowlists, per-trade cap in USD and in raw tokens, daily cap, fee ceiling, kill switch. Above $4 it waits for the owner.",
+    body: "Caller, signature, freshness, replay, token and venue allowlists, per-trade cap in USD and in raw tokens, daily cap, fee ceiling, the owner's price floor, kill switch. Above $4 it waits for the owner.",
   },
   {
     who: "Venue",
-    title: "Trade settles back to the vault",
-    body: "No trade shape has a recipient field, so output can only return to the vault. Testnet: wrap.testnet. Mainnet: intents.near.",
+    title: "Fills or refunds",
+    body: "The contract writes the Ref Finance swap itself. Ref pays out at least the minimum to the vault, or reverts and the tokens come back. No trade has a recipient field.",
   },
 ];
 
@@ -71,15 +70,20 @@ export function HowItWorks() {
               ],
               [
                 "The agent's key",
-                "Send execute() calls and spend its 0.5 NEAR gas budget",
+                "Send execute() calls and spend its 0.5 NEAR gas budget. Without a guard signature they all fail.",
                 "Transfer, add keys, delete the account, or call another contract. NEAR's protocol refuses.",
               ],
               [
                 "The guard server and its key",
-                "Sign bad quotes",
-                "Pass the contract's caps, allowlists, daily limit or owner approval. A $50 quote is refused even with a valid signature.",
+                "Sign bad quotes until the owner notices",
+                "Sell below the owner's price floor, exceed any cap, add a venue, or skip owner approval. Once the owner rotates the key, its quotes are worthless.",
               ],
-              ["The owner's key", "Change limits and withdraw", "Nothing is stopped. The owner is the human in charge."],
+              ["Anyone else", "Read the vault", "Call execute(), even with a genuine signed quote. Only the agent key or the owner may."],
+              [
+                "The owner's key",
+                "Tighten limits and pause at once; withdraw to itself",
+                "Loosen any limit or resume trading without waiting out the timelock (10 minutes on testnet)",
+              ],
             ].map(([who, can, cant]) => (
               <tr key={who}>
                 <td className="py-3 pr-4 text-ivory">{who}</td>
@@ -101,12 +105,12 @@ export function WhyNear() {
       body: "A NEAR function-call access key is limited by the protocol to one contract, chosen methods and a gas budget. The vault installs the agent's key itself: execute() only. On most chains you'd need a smart-contract wallet and a module system to get the same guarantee.",
     },
     {
-      title: "One vault, any chain's liquidity",
-      body: "NEAR Intents lets the vault deposit into intents.near and settle swaps through solvers across chains. The guard already prices every trade against live 1Click solver quotes. Pointing the vault at intents.near is a policy change, not new code.",
+      title: "Accounts nobody can sign for",
+      body: "After setup the vault's only full-access key was deleted. Its funds move only when its code says so, and anyone can confirm that from the chain.",
     },
     {
-      title: "Accounts that can't be signed for",
-      body: "After setup the vault's only full-access key was deleted. Its funds can move only when its code says so, and anyone can confirm that from the chain.",
+      title: "Contracts that call DEXes directly",
+      body: "The vault writes its own Ref Finance swap and gets the result back in a callback. If Ref refuses or refunds, the vault's daily spend is restored.",
     },
   ];
   return (
@@ -120,16 +124,35 @@ export function WhyNear() {
           </div>
         ))}
       </div>
-      <p className="max-w-3xl text-sm text-ivory-dim">
-        Scope, plainly: the vault runs on testnet and trades NEAR and wNEAR through wrap.testnet, because NEAR Intents
-        runs on mainnet only. The guard&apos;s pricing uses live mainnet quotes. The $1 mainnet swap further down uses
-        1Click directly, signed in your own wallet.
-      </p>
+      <div className="max-w-3xl space-y-3 rounded-[24px] border border-rule bg-panel-deep p-5 text-sm leading-relaxed text-ivory-dim sm:p-7">
+        <h3 className="font-display text-2xl font-extrabold tracking-wide text-ivory">Next: NEAR Intents on mainnet</h3>
+        <p>
+          The vault trades on Ref Finance on testnet today. NEAR Intents is the mainnet goal, and it isn&apos;t a config
+          change. A vault holding funds in <span className="font-mono text-ivory">intents.near</span> needs someone to sign
+          intents for it, and a contract can&apos;t sign on its own.
+        </p>
+        <p>
+          Our plan: the vault registers a dedicated signing key with intents.near. That key signs only the swap intents the
+          vault&apos;s contract has already approved, and withdrawals out of intents.near go back through the vault. That
+          adds one trust assumption, that this key signs only approved intents, so we&apos;ll state it plainly when we ship it.
+          Until then, the separate $1 mainnet swap uses 1Click from your own wallet, outside the vault.
+        </p>
+      </div>
     </section>
   );
 }
 
 const TESTS = [
+  "Swap above the owner's floor executes",
+  "Signed swap below the floor is refused",
+  "Swap pair without a floor is refused",
+  "Swap without a minimum output is refused",
+  "Wrapping must be one to one",
+  "Tightening applies at once",
+  "Loosening waits for the timelock",
+  "Loosening can't skip the timelock",
+  "Lowering a floor counts as loosening",
+  "Key-leak drill: pause, rotate, resume after timelock",
   "Agent trades alone within limits",
   "Over the per-trade cap is refused",
   "Raw token cap holds even if the guard lies about USD value",
@@ -151,68 +174,35 @@ const TESTS = [
   "Agent can't replace its own key",
 ];
 
-export function Evidence({ backtest }: { backtest: BacktestResult | null }) {
-  const bt = backtest && backtest.source === "coingecko" ? backtest : null;
-  const pct = (n: number | null) => (n === null ? "n/a" : `${n > 0 ? "+" : ""}${n.toFixed(2)}%`);
+export function Evidence() {
   return (
-    <section className="space-y-10">
-      <SectionHead title="Evidence" lede="Everything here can be checked: the code, the tests, and the chain." />
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-4 rounded-[24px] border border-rule bg-panel-deep p-5 sm:p-7">
-          <div className="flex items-baseline justify-between gap-3">
-            <h3 className="font-display text-3xl font-black tracking-wide text-ivory">Contract tests</h3>
-            <span className="font-mono text-proceed">{TESTS.length} passing</span>
-          </div>
-          <ul className="grid gap-1.5 text-sm sm:grid-cols-2">
-            {TESTS.map((t) => (
-              <li key={t} className="flex gap-2 text-ivory">
-                <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-proceed" />
-                {t}
-              </li>
-            ))}
-          </ul>
-          <p className="flex flex-wrap gap-x-5 text-sm">
-            <a className="text-points underline decoration-points/40 underline-offset-4" href={CONTRACT_SRC}>
-              Contract source
-            </a>
-            <a className="text-points underline decoration-points/40 underline-offset-4" href={CONTRACT_TESTS}>
-              Tests
-            </a>
-            <a className="text-points underline decoration-points/40 underline-offset-4" href={`${REPO}/blob/main/scripts/deploy-testnet.sh`}>
-              Deploy script
-            </a>
-          </p>
-        </div>
-
-        <div className="space-y-4 rounded-[24px] border border-rule bg-panel-raised p-5 sm:p-7">
-          <h3 className="font-display text-3xl font-black tracking-wide text-ivory">The agent&apos;s strategy, backtested</h3>
-          <p className="text-sm text-ivory-dim">
-            NEAR, last {bt?.days ?? 30} days of CoinGecko daily prices, {bt?.feeBpsAssumed ?? 20} bps fees per trade. A
-            backtest, not a promise.
-          </p>
-          {bt ? (
-            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-              {[
-                ["After fees", pct(bt.pnlAfterFeesPct)],
-                ["Buy and hold", pct(bt.buyAndHoldPct)],
-                ["Difference", pct(bt.vsBuyAndHoldPct)],
-                ["Trades", String(bt.trades)],
-                ["Win rate", bt.winRatePct === null ? "n/a" : `${bt.winRatePct.toFixed(0)}%`],
-                ["Worst drawdown", bt.maxDrawdownPct === null ? "n/a" : `${bt.maxDrawdownPct.toFixed(2)}%`],
-              ].map(([k, v]) => (
-                <div key={k}>
-                  <dt className="text-sm text-ivory-dim">{k}</dt>
-                  <dd className="font-mono text-2xl text-ivory">{v}</dd>
-                </div>
-              ))}
-            </dl>
-          ) : (
-            <p className="text-sm text-caution">
-              Historical prices weren&apos;t available when this page was built. Reload to try again.
-            </p>
-          )}
-        </div>
+    <div className="space-y-4 rounded-[24px] border border-rule bg-panel-deep p-5 sm:p-7">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h3 className="font-display text-3xl font-black tracking-wide text-ivory">The contract&apos;s tests</h3>
+        <span className="font-mono text-proceed">{TESTS.length} passing</span>
       </div>
-    </section>
+      <ul className="grid gap-1.5 text-sm sm:grid-cols-2 lg:grid-cols-3">
+        {TESTS.map((t) => (
+          <li key={t} className="flex gap-2 text-ivory">
+            <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-proceed" />
+            {t}
+          </li>
+        ))}
+      </ul>
+      <p className="flex flex-wrap gap-x-5 text-sm">
+        <a className="text-points underline decoration-points/40 underline-offset-4" href={CONTRACT_SRC}>
+          Contract source
+        </a>
+        <a className="text-points underline decoration-points/40 underline-offset-4" href={CONTRACT_TESTS}>
+          Tests
+        </a>
+        <a className="text-points underline decoration-points/40 underline-offset-4" href={`${REPO}/blob/main/scripts/deploy-testnet.sh`}>
+          Deploy script
+        </a>
+        <a className="text-points underline decoration-points/40 underline-offset-4" href={`${REPO}/blob/main/scripts/key-leak-drill.sh`}>
+          Key-leak drill
+        </a>
+      </p>
+    </div>
   );
 }
