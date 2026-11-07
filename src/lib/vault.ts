@@ -175,7 +175,8 @@ function agentAccount() {
   if (!sk) throw new Error("AGENT_PRIVATE_KEY not configured");
   const signer = KeyPairSigner.fromSecretKey(sk as KeyPairString);
   // The agent signs as the vault account, using its function-call key.
-  return new Account(VAULT_ID, rpc() as never, signer);
+  // A single provider here, so NEAR's own rejection reason reaches the caller.
+  return new Account(VAULT_ID, new JsonRpcProvider({ url: RPC_URLS[0] }) as never, signer);
 }
 
 export type TxResult = {
@@ -218,12 +219,16 @@ function parseResponse(r: unknown): TxResult {
 }
 
 function describeError(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const err = e as any;
+  const raw = [err?.type, err?.message, err?.cause?.message, JSON.stringify(err?.data ?? err?.cause?.data ?? "")]
+    .filter(Boolean)
+    .join(" ");
   if (/MethodNameMismatch|method_name/i.test(raw)) return "NEAR refused it: this key may only call execute().";
   if (/ReceiverMismatch|receiver/i.test(raw)) return "NEAR refused it: this key may only call the vault contract.";
   if (/RequiresFullAccess|full access/i.test(raw)) return "NEAR refused it: moving tokens needs a full-access key, and the vault has none.";
   if (/NotEnoughAllowance/i.test(raw)) return "The agent key's gas allowance is used up.";
-  return raw.slice(0, 300);
+  return `NEAR refused it: ${raw.slice(0, 240)}`;
 }
 
 /** Agent calls execute() with a guard-signed quote. */
