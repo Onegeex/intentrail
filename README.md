@@ -153,3 +153,7 @@ Environment: `GUARD_SIGNING_KEY` (base64 ed25519 seed), `AGENT_PRIVATE_KEY` (`ed
 - `src/app`: Next.js site and API routes
 
 MIT licensed.
+
+## Also by this builder
+
+[Heist](https://github.com/Onegeex/heist) is a separate, independent NEAR HACKATHON submission: a game where players try to talk an AI guardian into opening a bounty vault. It does not import IntentRail's code; its vault contract was written separately.
