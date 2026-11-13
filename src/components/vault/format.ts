@@ -63,3 +63,7 @@ export const STATUS_LABEL: Record<string, string> = {
   Failed: "Venue failed, refunded",
   Cancelled: "Cancelled",
 };
+
+/** The one wording of the exit-floor rule, used everywhere. */
+export const EXIT_FLOOR_RULE =
+  "Exit floor: alone, the owner can swap into the stablecoin at once, but for no less than 90% of the last guard-signed rate for that pair (before any trade, 90% of the price floor). Anything lower needs the guardian's approval or the timelock.";

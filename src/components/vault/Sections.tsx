@@ -1,5 +1,5 @@
 import drills from "@/data/drills.json";
-import { CONTRACT_SRC, CONTRACT_TESTS, EXPLORER, REPO } from "./format";
+import { CONTRACT_SRC, CONTRACT_TESTS, EXIT_FLOOR_RULE, EXPLORER, REPO } from "./format";
 
 export function SectionHead({ title, lede }: { title: string; lede?: React.ReactNode }) {
   return (
@@ -125,8 +125,8 @@ function TRUST(w: WorstCase): { who: string; can: string; cant: string; root?: b
     },
     {
       who: "The owner's key alone",
-      can: "Queue a withdrawal to the owner account, which the attacker now controls. Queue looser limits. Exit into the stablecoin at once, but at most 10% under the last guard-signed rate.",
-      cant: "Take anything out before the timelock (10 minutes on testnet, a day on mainnet), stop the guardian vetoing it, or dump the vault deeper than the exit floor without the guardian.",
+      can: "Queue a withdrawal to the owner account, which the attacker now controls. Queue looser limits. Exit into the stablecoin at once, down to the exit floor (90% of the last guard-signed rate).",
+      cant: "Take anything out before the timelock (10 minutes on testnet, a day on mainnet), stop the guardian vetoing it, or exit below the exit floor without the guardian.",
     },
     {
       who: "The guardian's key alone",
@@ -158,7 +158,7 @@ export function WhyNear() {
     },
   ];
   return (
-    <section className="space-y-10">
+    <section id="why-near" className="scroll-mt-32 space-y-10">
       <SectionHead title="Why this needs NEAR" />
       <div className="grid gap-6 md:grid-cols-3">
         {points.map((p) => (
@@ -169,21 +169,21 @@ export function WhyNear() {
         ))}
       </div>
       <div className="space-y-5 rounded-[24px] border border-rule bg-panel-deep p-5 sm:p-7">
-        <h3 className="font-display text-3xl font-black tracking-wide text-ivory">Mainnet: the contract signs intents through chain signatures</h3>
+        <h3 className="font-display text-3xl font-black tracking-wide text-ivory">Next, on mainnet: the contract will sign intents through chain signatures</h3>
         <p className="max-w-3xl text-sm leading-relaxed text-ivory-dim">
-          On testnet the vault trades on Ref Finance and the guard prices every trade on that same pool. For NEAR Intents
-          on mainnet, funds held in <span className="font-mono text-ivory">intents.near</span> move only with a signed
-          intent. A key that a server or a person holds would bypass every check above. So the vault won&apos;t hold one.
-          The contract checks the intent, then asks NEAR&apos;s chain-signatures MPC network to sign it. No hot key exists
-          anywhere.
+          Today the vault trades on Ref Finance testnet, and the guard prices every trade on that same pool. On mainnet,
+          funds held in <span className="font-mono text-ivory">intents.near</span> will move only with a signed intent, and
+          a key held by a server or a person would bypass every check above. So the vault will never hold one. The
+          contract will check each intent, then ask NEAR&apos;s chain-signatures MPC network to sign it. No hot key will
+          exist anywhere.
         </p>
         <ol className="grid gap-px overflow-hidden rounded-2xl border border-rule bg-rule text-sm md:grid-cols-5">
           {[
-            ["Agent", "Proposes a swap"],
-            ["Guard", "Prices it on a live 1Click quote and signs the quote"],
-            ["Vault contract", "Runs every check above on the exact intent"],
-            ["Chain signatures", "MPC signs that intent for the vault's derived key on intents.near"],
-            ["intents.near", "Solver fills it; balances stay under the vault's key"],
+            ["Agent", "Will propose a swap"],
+            ["Guard", "Will price it on a live 1Click quote and sign the quote"],
+            ["Vault contract", "Will run every check above on the exact intent"],
+            ["Chain signatures", "MPC will sign that intent for the vault's derived key on intents.near"],
+            ["intents.near", "A solver will fill it; balances stay under the vault's key"],
           ].map(([who, what], i) => (
             <li key={who} className="space-y-1 bg-panel p-4">
               <span className="font-display text-2xl font-black text-caution">{i + 1}</span>
@@ -193,8 +193,8 @@ export function WhyNear() {
           ))}
         </ol>
         <p className="max-w-3xl text-sm text-ivory-dim">
-          Status, plainly: this is the design, not shipped code. Today the vault has never touched intents.near. The
-          separate $1 swap on the mainnet page uses 1Click from your own wallet, outside the vault.
+          Status, plainly: this is the plan, not shipped code. The vault has not touched intents.near yet. The separate $1
+          swap on the mainnet page uses 1Click from your own wallet, outside the vault.
         </p>
       </div>
     </section>
@@ -310,7 +310,7 @@ const STATUS: { label: string; tone: string; dot: string; items: string[] }[] = 
       "Agent key limited by NEAR to execute() with a gas budget",
       "Guard signatures, price floors, caps, replay and expiry checks",
       "Guardian veto and pause; timelocked withdrawals and loosening",
-      "Crash exit with a floor; deeper exits need the guardian",
+      "Crash exit to the stablecoin, with an exit floor; lower needs the guardian",
       "Swaps on Ref Finance written by the contract itself",
       "An LLM agent on NEAR AI Cloud you can hijack",
       "Owner alerts for held trades: badge, webhook, Telegram",
@@ -322,8 +322,8 @@ const STATUS: { label: string; tone: string; dot: string; items: string[] }[] = 
     tone: "border-caution/40",
     dot: "bg-caution",
     items: [
-      "Mainnet: the vault signs NEAR Intents through chain signatures, with no hot key",
-      "Price floors relative to an oracle instead of fixed numbers",
+      "Mainnet NEAR Intents through chain signatures, with no hot key. The vault hasn't traded through intents.near yet.",
+      "Oracle-relative price floors. Today's floors are fixed numbers that need re-tuning by hand.",
     ],
   },
   {
@@ -331,10 +331,8 @@ const STATUS: { label: string; tone: string; dot: string; items: string[] }[] = 
     tone: "border-danger/40",
     dot: "bg-danger",
     items: [
-      "A vault trade through intents.near (the vault has never touched it)",
       "Owner and guardian as multisigs held by different people",
       "A one-day timelock on mainnet (it's a setting; testnet uses 10 minutes)",
-      "Floors re-tuned automatically as the price moves",
     ],
   },
 ];

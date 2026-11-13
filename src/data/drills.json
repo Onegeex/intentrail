@@ -18,7 +18,7 @@
    },
    {
     "title": "Attacker dumps 1 wNEAR into USDT at half price",
-    "detail": "The owner's instant crash exit, with a minimum output of 0.5 USDT per wNEAR. Alone, the owner may go at most 10% under the last guard-signed rate.",
+    "detail": "The owner's instant crash exit, asking only 0.5 USDT per wNEAR. The exit floor is 90% of the last guard-signed rate, so the contract refuses it.",
     "result": "Refused: EXIT_FLOOR",
     "tx": "573MWrwuwtjavQkuSMMxmf9HRFLU5BKxmYWU9L6yAuzx"
    },

@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
 import type { VaultSnapshot } from "@/lib/vault";
 import type { WorstCase } from "./Sections";
-import { CHECK_LABEL, EXPLORER, STATUS_LABEL, centsToUsd, shortKey, timeAgo, yoctoToNear } from "./format";
+import { CHECK_LABEL, EXIT_FLOOR_RULE, EXPLORER, STATUS_LABEL, centsToUsd, shortKey, timeAgo, yoctoToNear } from "./format";
 
 type RunResult = {
   intent: string;
@@ -196,7 +196,7 @@ export function VaultPanel({ initial, ownerId, worstCase }: { initial: VaultSnap
                 ? [["If the guard is hacked", `At most about $${worstCase.perDayUsd.toFixed(2)} a day at today's pool prices, until someone pauses`]]
                 : []),
               ...((p.exit_tokens ?? []).length
-                ? [["Crash exit", `The owner can swap into ${(p.exit_tokens ?? []).map((t) => t.split(".")[0]).join(", ")} at once, at most ${(p.exit_max_discount_bps ?? 1000) / 100}% under the last guard-signed rate. Deeper needs the guardian.`]]
+                ? [["Exit floor", EXIT_FLOOR_RULE.replace("Exit floor: a", "A")]]
                 : []),
               ...(p.price_floors ?? []).map((f) => [
                 `Floor ${f.token_in.split(".")[0]} to ${f.token_out.split(".")[0]}`,
@@ -316,7 +316,7 @@ export function VaultPanel({ initial, ownerId, worstCase }: { initial: VaultSnap
 
         <div className="rounded-[24px] border border-rule bg-panel-deep p-5 sm:p-7">
           <h3 className="font-display text-xl font-extrabold tracking-wide text-ivory">Contract log</h3>
-          <p className="text-xs text-ivory-dim">Stored on-chain by the vault. Newest first.</p>
+          <p className="text-xs text-ivory-dim">Latest 8 events, stored on-chain by the vault. Newest first.</p>
           <ol className="mt-3 space-y-3">
             {snap.events.slice(0, 8).map((e) => (
               <li key={e.id} className="grid grid-cols-[auto_1fr] gap-x-3 text-sm">

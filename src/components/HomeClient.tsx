@@ -106,7 +106,7 @@ function Hero({ stats, held }: { stats: VaultSnapshot["stats"] | null; held: num
                 <p className="mt-1 text-sm text-ivory">
                   <span className="font-mono text-lg text-proceed">{stats.executed}</span> executed ·{" "}
                   <span className="font-mono text-lg text-danger">{stats.rejected}</span> refused ·{" "}
-                  <span className="font-mono text-lg text-caution">{stats.failed}</span> venue refunds
+                  <span className="font-mono text-lg text-caution">{stats.failed}</span> venue refund{stats.failed === 1 ? "" : "s"}
                 </p>
                 {held > 0 && (
                   <a href="#vault" className="mt-2 inline-flex rounded-full bg-caution px-3 py-1 text-xs font-semibold text-panel-deep">
@@ -155,7 +155,7 @@ function CountUp({ to, decimals = 0, prefix = "" }: { to: number; decimals?: num
 function ProofStrip({ attack, worstCase, vaultId, tests }: { attack: AttackRun; worstCase: WorstCase; vaultId: string; tests: number }) {
   const refused = attack.attempts.filter((a) => a.blocked).length;
   const tiles = [
-    { big: <CountUp to={refused} />, unit: `of ${refused} attacks refused`, note: "This run, on-chain, with transaction links", href: "#attack", tone: "text-danger" },
+    { big: <CountUp to={refused} />, unit: `of ${refused} attacks refused`, note: "8 on-chain + 3 pre-chain, this run", href: "#attack", tone: "text-danger" },
     { big: <CountUp to={tests} />, unit: "contract tests passing", note: "Bypasses, floors, timelocks, guardian, exits", href: "#how", tone: "text-proceed" },
     worstCase
       ? { big: <CountUp to={worstCase.perDayUsd} decimals={2} prefix="$" />, unit: "a day, worst case", note: `If our guard server is hacked: ${worstCase.worstGapPct}% × $${worstCase.dailyCapUsd} cap`, href: "#how", tone: "text-caution" }
@@ -184,6 +184,7 @@ const CHAPTERS = [
   ["drills", "Drills"],
   ["vault", "Live vault"],
   ["status", "What's real"],
+  ["why-near", "Why NEAR"],
   ["api", "Intents preview"],
 ] as const;
 
@@ -343,6 +344,13 @@ export function HomeClient({
           lede="A real language model on NEAR AI Cloud holds the vault's agent key. We use an abliterated model, one with its refusals removed, and tell it to obey: it's the worst-case agent. In this mode the guard is treated as hacked too, so it signs whatever the model asks for. Only the contract stands in the way."
         >
           <AgentChat configured={llmConfigured} recorded={recordedLlm} />
+          <p className="max-w-4xl rounded-2xl border border-rule bg-panel-deep p-4 text-sm leading-relaxed text-ivory-dim">
+            <span className="font-semibold text-ivory">Why PRICE_FLOOR and not SIZE for the $500 sale?</span> The contract
+            reports the first check that fails, in this order: caller, kill switch, guard signature, vault, expiry, replay,
+            token allowlist, venue, trade shape, minimum output and price floor, size caps, fee ceiling, daily cap, then owner
+            approval. Selling $500 &quot;at any price&quot; fails the price floor before it reaches the size cap. A large trade at a
+            fair price is refused at SIZE: see &quot;Steal the guard key and sign a $50 trade&quot; in the attack board.
+          </p>
         </Section>
 
         <div id="how" className="scroll-mt-32 space-y-10">

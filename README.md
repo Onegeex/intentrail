@@ -21,10 +21,10 @@ Everything below runs against `intentrail-vault5-39ae84.testnet`. Each step name
 
 | # | Do | See |
 | --- | --- | --- |
-| 1 | Open https://intentrail-neon.vercel.app and read the strip under the hero | `11 of 11 attacks refused`, `45 contract tests passing`, a worst-case dollar figure, and the vault id |
-| 2 | Scroll to **We gave the agent's key to an attacker** | 11 attacks in three columns (NEAR access keys, IntentRail contract, Ref Finance), each with the check that fired, and one honest swap that filled. Every on-chain row links to NearBlocks |
+| 1 | Open https://intentrail-neon.vercel.app and read the strip under the hero | `11 of 11 attacks refused` (8 on-chain + 3 pre-chain), `45 contract tests passing`, a worst-case dollar figure, and the vault id |
+| 2 | Scroll to **We gave the agent's key to an attacker** | 11 attacks in three columns (NEAR access keys, IntentRail contract, Ref Finance), each with the check that fired, and one honest swap that filled. The 8 on-chain refusals link to NearBlocks; the 3 pre-chain ones show NEAR's own error, because no transaction is ever created |
 | 3 | Press **Run all 12 again, live** (about a minute; at most once every 90 s) | The same 12 transactions sent again to testnet, with new hashes and the same outcomes |
-| 4 | In **Hijack the agent yourself**, pick **Poisoned market data** and press **Send to the agent** | An abliterated LLM on NEAR AI Cloud, with the guard treated as hacked, sends guard-signed trades. The contract refuses them with `VENUE` and `PRICE_FLOOR`, with transaction links. If the model is slow, a recorded real run is shown, labelled as recorded |
+| 4 | In **Hijack the agent yourself**, pick **Poisoned market data** and press **Send to the agent** | An abliterated LLM on NEAR AI Cloud, with the guard treated as hacked, sends guard-signed trades. The contract refuses them with `VENUE` and `PRICE_FLOOR`, with transaction links. If the model is slow, a recorded real run is shown, labelled as recorded. Why `PRICE_FLOOR` and not `SIZE` for the $500 sale: see [Check order](#check-order) |
 | 5 | In **The vault, live**, press **Swap $1.50** | A real Ref Finance swap from the vault, no human needed, with the fill read from the chain |
 | 6 | Press **Ask for $6** | `Waiting for owner`: $6 is over the $4 autonomy limit, so the contract queues it. A "trades waiting for the owner" notice appears on the panel and in the hero, and an owner alert goes out if Telegram or a webhook is configured |
 | 7 | Read **Stolen keys, rehearsed** | Two drills run for real on the same vault. A stolen owner key can't withdraw early or dump at half price (`EXIT_FLOOR`), and the guardian vetoes. A leaked guard key is paused, rotated, and resumed only after the timelock |
@@ -54,7 +54,7 @@ Everything below runs against `intentrail-vault5-39ae84.testnet`. Each step name
 | Agent function-call key | Server (`AGENT_PRIVATE_KEY`) | Call `execute` on the vault, spend its gas budget | Transfer, add or delete keys, call any other method or contract (NEAR refuses) |
 | Guard signing key | Server (`GUARD_SIGNING_KEY`) | Sign bad-but-allowed trades until someone notices: down to the owner's price floor, up to $4 a trade, within the daily cap. The site shows the live dollar figure. | Exceed any cap, sell below the floor, add a venue, or skip owner approval |
 | Anyone else | – | Read the vault | Call `execute`, even with a genuine signed quote |
-| Owner key alone | A person | Queue a withdrawal to the owner account (an attacker holding this key gets it), queue looser limits, exit into the stablecoin at once but at most 10% under the last guard-signed rate | Take anything out before the timelock (10 min on testnet, a day on mainnet), stop the guardian vetoing it, or exit deeper without the guardian |
+| Owner key alone | A person | Queue a withdrawal to the owner account (an attacker holding this key gets it), queue looser limits, exit into the stablecoin at once, down to the exit floor (90% of the last guard-signed rate) | Take anything out before the timelock (10 min on testnet, a day on mainnet), stop the guardian vetoing it, or exit below the exit floor without the guardian |
 | Guardian key alone | A second person | Pause, veto queued withdrawals, policy changes and deep exits; approve a deep exit the owner asked for | Move funds, start an exit, resume trading, or loosen anything |
 | Owner and guardian together | – | Drain the vault after the timelock, or exit at any price. This is the trust root. | – On mainnet, make both multisigs held by different people (not built yet). |
 
@@ -70,16 +70,16 @@ Limits that need memory (the daily cap, replay protection and owner approval) ar
 - **Locked accounts**: with the full-access key deleted, the vault's funds move only when its code says so, and anyone can verify that on-chain.
 - **Contracts that call DEXes directly**: the vault writes its own Ref Finance swap and learns the result in a callback; a refund restores its daily spend.
 
-### Mainnet: the contract signs intents through chain signatures
+### Next, on mainnet: the contract will sign intents through chain signatures
 
-For NEAR Intents, funds in `intents.near` move only with a signed intent, and a key held by a server or a person would bypass every vault check. So the vault won't hold one: the contract checks the intent, then asks NEAR's chain-signatures MPC network to sign it for the vault's derived key. No hot key exists anywhere.
+On mainnet, funds in `intents.near` will move only with a signed intent, and a key held by a server or a person would bypass every vault check. So the vault will never hold one: the contract will check each intent, then ask NEAR's chain-signatures MPC network to sign it for the vault's derived key. No hot key will exist anywhere.
 
 ```
 Agent -> Guard (prices on a live 1Click quote, signs) -> Vault contract (all checks)
       -> chain signatures MPC (signs that exact intent) -> intents.near -> solver fills
 ```
 
-Status: design, not shipped. Today the vault trades on Ref Finance testnet, and the guard prices vault trades on that same pool. The preflight API prices on 1Click because that's where other agents' trades settle. The `/mainnet` page swaps $1 through 1Click from the user's own wallet, outside the vault.
+Status: planned, not shipped. Today the vault trades on Ref Finance testnet, and the guard prices vault trades on that same pool. The preflight API prices on 1Click because that's where other agents' trades settle. The `/mainnet` page swaps $1 through 1Click from the user's own wallet, outside the vault.
 
 **Test token:** the testnet pool uses `usdt.itachicara.testnet`, a community test token in a thin pool. Its fills aren't market prices.
 
@@ -87,9 +87,15 @@ Status: design, not shipped. Today the vault trades on Ref Finance testnet, and 
 
 Price floors are fixed by the owner, and lowering one waits for the timelock. So that a floor can't trap the vault in a crash, the owner can call `exit_to_stable`: an immediate swap into an exit token (the stablecoin), even when paused and below the floors.
 
-That exit has its own floor. Alone, the owner may go at most `exit_max_discount_bps` (10%) under the rate of the last swap the guard signed and the contract accepted, or under the price floor if there's no trade yet. Without it, an attacker holding the owner key could push the thin pool's price, then dump the vault into it: the funds would stay in the vault, but their value would leave. A deeper exit goes through `request_exit` and needs the guardian's `approve_exit`, or waits out the timelock.
+**Exit floor:** alone, the owner can swap into the stablecoin at once, but for no less than 90% of the last guard-signed rate for that pair (before any trade, 90% of the price floor). Anything lower needs the guardian's approval or the timelock.
+
+In the contract this is `exit_max_discount_bps` = 1000. Without it, an attacker holding the owner key could push the thin pool's price, then dump the vault into it: the funds would stay in the vault, but their value would leave. A lower exit goes through `request_exit` and needs the guardian's `approve_exit`, or waits out the timelock.
 
 Floors are fixed numbers today. If the price rises, the gap to the floor widens; if it falls, the floor blocks sales (the crash exit covers that). They need re-tuning. An oracle-relative floor is designed, not built.
+
+## Check order
+
+The contract reports the first check that fails, in this order: caller, kill switch, guard signature, vault, expiry, replay, token allowlist, venue, trade shape, minimum output and price floor, size caps (raw, then USD), fee ceiling, daily cap, then owner approval. So a $500 sale "at any price" is refused at `PRICE_FLOOR` before it reaches the size cap. A large trade at a fair price is refused at `SIZE` (the "$50 trade" attack).
 
 ## Drills, run on testnet
 
@@ -104,19 +110,34 @@ Every step links to its transaction on the site.
 
 You need [`near` CLI](https://github.com/near/near-cli-rs), [`cargo-near`](https://github.com/near/cargo-near) and Node 20+.
 
-**1. Make keys** for the vault deployer, your agent and your guard (the guard key is a raw ed25519 seed):
+**1. Get the code, build and test the contract:**
 
 ```bash
-near account create-account fund-later use-auto-generation save-to-folder ./keys   # run three times
-node -e "const k=require('crypto').generateKeyPairSync('ed25519');console.log(k.privateKey.export({format:'der',type:'pkcs8'}).subarray(16).toString('base64'))"
+git clone https://github.com/Onegeex/intentrail && cd intentrail
+npm install
+rustup target add wasm32-unknown-unknown
+cargo install cargo-near near-cli-rs
+(cd contract && cargo test && cargo near build non-reproducible-wasm)
 ```
 
-**2. Deploy and lock the vault** in one command. It creates the vault, sets your limits (edit `POLICY` in the script), registers the tokens, installs your agent's execute-only key, and deletes the vault's full-access key:
+**2. Make keys, then deploy and lock your vault in one command.** The script creates the vault account, sets your limits (edit `POLICY` in `scripts/deploy-testnet.sh`), registers the tokens, installs your agent's execute-only key, and deletes the vault's full-access key.
 
 ```bash
-VAULT_ID=my-vault.testnet OWNER_ID=me.testnet OWNER_SK=ed25519:... \
-GUARDIAN_ID=friend.testnet VAULT_DEPLOYER_PK=ed25519:... VAULT_DEPLOYER_SK=ed25519:... \
-AGENT_PK=ed25519:... GUARD_PK_B64=... npm run vault:deploy
+# Key pairs for the vault deployer and your agent (prints public and secret keys)
+near account create-account fund-later use-auto-generation save-to-folder ./keys
+near account create-account fund-later use-auto-generation save-to-folder ./keys
+
+# Your guard's ed25519 seed (keep it secret) and its public key, both base64
+node -e "const c=require('crypto');const k=c.generateKeyPairSync('ed25519');console.log('GUARD_SIGNING_KEY='+k.privateKey.export({format:'der',type:'pkcs8'}).subarray(16).toString('base64'));console.log('GUARD_PK_B64='+k.publicKey.export({format:'der',type:'spki'}).subarray(12).toString('base64'))"
+
+export VAULT_ID=my-vault.testnet OWNER_ID=me.testnet OWNER_SK=ed25519:...
+export GUARDIAN_ID=friend.testnet
+export VAULT_DEPLOYER_PK=ed25519:... VAULT_DEPLOYER_SK=ed25519:...
+export AGENT_PK=ed25519:... GUARD_PK_B64=...
+npm run vault:deploy
+
+# Check: one function-call key for execute only, no full-access key
+near account list-keys "$VAULT_ID" network-config testnet now
 ```
 
 **3. Plug in your agent** in a few lines: see [`examples/agent-trade.ts`](examples/agent-trade.ts). It asks your guard for a signed quote, then calls `execute` with its key. The contract decides. To run this site's guard and dashboard against your vault, set `VAULT_ID`, `GUARD_SIGNING_KEY` and `AGENT_PRIVATE_KEY` and `npm run dev`.
@@ -127,11 +148,11 @@ AGENT_PK=ed25519:... GUARD_PK_B64=... npm run vault:deploy
 
 | Built and running on testnet | Designed, not built | Not done yet |
 | --- | --- | --- |
-| GuardVault contract (45 tests), full-access key deleted | Mainnet: the vault signs NEAR Intents through chain signatures | A vault trade through `intents.near` |
-| Agent key limited by NEAR to `execute`, with a gas budget | Oracle-relative price floors | Owner and guardian as multisigs |
-| Guard signatures, floors, caps, replay and expiry checks | | A one-day mainnet timelock (a setting) |
-| Guardian veto and pause; timelocked withdrawals and loosening | | Automatic floor re-tuning |
-| Crash exit with a floor; deep exits need the guardian | | |
+| GuardVault contract (45 tests), full-access key deleted | Mainnet NEAR Intents through chain signatures, with no hot key. The vault hasn't traded through `intents.near` yet | Owner and guardian as multisigs |
+| Agent key limited by NEAR to `execute`, with a gas budget | Oracle-relative price floors. Today's floors are fixed numbers that need re-tuning by hand | A one-day mainnet timelock (a setting; testnet uses 10 minutes) |
+| Guard signatures, floors, caps, replay and expiry checks | | |
+| Guardian veto and pause; timelocked withdrawals and loosening | | |
+| Crash exit to the stablecoin, with an exit floor; lower needs the guardian | | |
 | Contract-written Ref Finance swaps; LLM agent on NEAR AI Cloud; owner alerts | | |
 
 ## Run it
