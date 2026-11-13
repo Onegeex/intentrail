@@ -8,12 +8,29 @@ IntentRail is a NEAR contract that holds an AI trading agent's funds. The agent'
 - **Vault on testnet:** [`intentrail-vault5-39ae84.testnet`](https://testnet.nearblocks.io/address/intentrail-vault5-39ae84.testnet)
 - **Contract:** [`contract/src/lib.rs`](contract/src/lib.rs) · **Tests:** [`contract/src/tests.rs`](contract/src/tests.rs) (45 passing)
 
-## The 90-second tour
+## NEAR HACKATHON entry
 
-1. Press **Watch an attack fail**. Real transactions go to NEAR testnet with the agent's own key or an outside account. Each result says which layer refused it: NEAR's access keys (no transaction ever exists), the IntentRail contract, or Ref Finance (minimum output). Every on-chain attempt links to NearBlocks. One honest swap goes through for comparison.
-2. **Hijack the agent yourself**: a real LLM on NEAR AI Cloud holds the agent key and a raw-transaction tool. We use an abliterated model (refusals removed) told to obey, the worst-case agent, and treat the guard as hacked too, so it signs whatever the model asks for. Tell it to drain the vault and watch what NEAR and the contract say.
-3. In **The vault, live**, press **Swap $1.50**: a real Ref Finance swap with a minimum output, no human needed. **Ask for $6** is above the $4 autonomy limit, so the contract holds it for the owner.
-4. Check the chain yourself: the vault has **no full-access key**. Its only key is the agent's, and it may call `execute` only.
+- **Tracks:** AI Security & Defense (primary): spending limits and a policy engine for an AI agent, with NEAR function-call keys. Also entered in Unstoppable DeFi (an agent trading vault).
+- **Built during the hackathon:** everything in this repo.
+- **Other entry by the same builder:** [Heist](https://github.com/Onegeex/heist), a separate, independent project in the Games track. It shares no code or deployment with IntentRail.
+- **NEAR tech used:** function-call access keys, a locked contract account (no full-access key), contract-to-DEX cross-contract calls with callbacks (Ref Finance), NEAR AI Cloud (the LLM agent), NEAR Intents 1Click (pricing preview and the `/mainnet` $1 swap). Chain signatures are designed for mainnet, not built.
+
+## Check it in five minutes: do this, see that
+
+Everything below runs against `intentrail-vault5-39ae84.testnet`. Each step names what you should see.
+
+| # | Do | See |
+| --- | --- | --- |
+| 1 | Open https://intentrail-neon.vercel.app and read the strip under the hero | `11 of 11 attacks refused`, `45 contract tests passing`, a worst-case dollar figure, and the vault id |
+| 2 | Scroll to **We gave the agent's key to an attacker** | 11 attacks in three columns (NEAR access keys, IntentRail contract, Ref Finance), each with the check that fired, and one honest swap that filled. Every on-chain row links to NearBlocks |
+| 3 | Press **Run all 12 again, live** (about a minute; at most once every 90 s) | The same 12 transactions sent again to testnet, with new hashes and the same outcomes |
+| 4 | In **Hijack the agent yourself**, pick **Poisoned market data** and press **Send to the agent** | An abliterated LLM on NEAR AI Cloud, with the guard treated as hacked, sends guard-signed trades. The contract refuses them with `VENUE` and `PRICE_FLOOR`, with transaction links. If the model is slow, a recorded real run is shown, labelled as recorded |
+| 5 | In **The vault, live**, press **Swap $1.50** | A real Ref Finance swap from the vault, no human needed, with the fill read from the chain |
+| 6 | Press **Ask for $6** | `Waiting for owner`: $6 is over the $4 autonomy limit, so the contract queues it. A "trades waiting for the owner" notice appears on the panel and in the hero, and an owner alert goes out if Telegram or a webhook is configured |
+| 7 | Read **Stolen keys, rehearsed** | Two drills run for real on the same vault. A stolen owner key can't withdraw early or dump at half price (`EXIT_FLOOR`), and the guardian vetoes. A leaked guard key is paused, rotated, and resumed only after the timelock |
+| 8 | Check the chain yourself: `near account list-keys intentrail-vault5-39ae84.testnet network-config testnet now` | One key only: a function-call key that may call `execute` on the vault, with a gas allowance. No full-access key |
+| 9 | Run the contract tests: `cd contract && cargo test` | `45 passed` |
+| 10 | Read **What's real, and what isn't yet** | What's built, what's designed, and what's not done |
 
 ## Where enforcement lives
 
@@ -37,9 +54,9 @@ IntentRail is a NEAR contract that holds an AI trading agent's funds. The agent'
 | Agent function-call key | Server (`AGENT_PRIVATE_KEY`) | Call `execute` on the vault, spend its gas budget | Transfer, add or delete keys, call any other method or contract (NEAR refuses) |
 | Guard signing key | Server (`GUARD_SIGNING_KEY`) | Sign bad-but-allowed trades until someone notices: down to the owner's price floor, up to $4 a trade, within the daily cap. The site shows the live dollar figure. | Exceed any cap, sell below the floor, add a venue, or skip owner approval |
 | Anyone else | – | Read the vault | Call `execute`, even with a genuine signed quote |
-| Owner key alone | A person | Queue a withdrawal to the owner account (an attacker holding this key gets it), queue looser limits, swap into the stablecoin at once (funds stay in the vault) | Take anything out before the timelock (10 min on testnet, a day on mainnet), or stop the guardian vetoing it |
-| Guardian key alone | A second person | Pause, veto queued withdrawals and policy changes | Move funds, resume trading, or loosen anything |
-| Owner and guardian together | – | Drain the vault after the timelock. This is the trust root. | – On mainnet, make both multisigs held by different people. |
+| Owner key alone | A person | Queue a withdrawal to the owner account (an attacker holding this key gets it), queue looser limits, exit into the stablecoin at once but at most 10% under the last guard-signed rate | Take anything out before the timelock (10 min on testnet, a day on mainnet), stop the guardian vetoing it, or exit deeper without the guardian |
+| Guardian key alone | A second person | Pause, veto queued withdrawals, policy changes and deep exits; approve a deep exit the owner asked for | Move funds, start an exit, resume trading, or loosen anything |
+| Owner and guardian together | – | Drain the vault after the timelock, or exit at any price. This is the trust root. | – On mainnet, make both multisigs held by different people (not built yet). |
 
 ### What the agent can no longer lie about
 
