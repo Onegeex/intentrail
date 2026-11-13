@@ -1,140 +1,259 @@
 {
- "ranAt": "2026-11-07T17:43:43.053Z",
+ "ranAt": "2026-11-13T19:13:38.221Z",
+ "priceUsd": 3.53,
  "attempts": [
   {
    "id": "withdraw",
    "layer": "near",
    "title": "Call withdraw() to pull funds out",
-   "how": "The agent key calls the vault's owner-only withdraw method.",
+   "how": "The published challenge key, a limited key on the vault like the agent's, calls the owner-only withdraw method.",
+   "result": {
+    "ok": false,
+    "protocolError": "Refused by NEAR: the agent's key may only call execute(). NEAR said: \"Access key does not allow method withdraw\""
+   },
    "blocked": true,
-   "blockedBy": "Refused by NEAR: the agent's key may only call execute(). NEAR said: \"Access key does not allow method withdraw\"",
-   "result": {}
+   "blockedBy": "Refused by NEAR: the agent's key may only call execute(). NEAR said: \"Access key does not allow method withdraw\""
   },
   {
    "id": "token",
    "layer": "near",
    "title": "Transfer wNEAR straight from the token contract",
-   "how": "The agent key signs ft_transfer on wrap.testnet to the attacker.",
+   "how": "The published key signs ft_transfer on wrap.testnet to the attacker.",
+   "result": {
+    "ok": false,
+    "protocolError": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault7-39ae84.testnet does not match transaction receiver wrap.testnet\""
+   },
    "blocked": true,
-   "blockedBy": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault5-39ae84.testnet does not match transaction receiver wrap.testnet\"",
-   "result": {}
+   "blockedBy": "Refused by NEAR: the agent's key only works on the vault contract. NEAR said: \"Access key receiver intentrail-vault7-39ae84.testnet does not match transaction receiver wrap.testnet\""
   },
   {
    "id": "native",
    "layer": "near",
    "title": "Send NEAR to the attacker",
-   "how": "The agent key signs a plain NEAR transfer out of the vault.",
+   "how": "The published key signs a plain NEAR transfer out of the vault.",
+   "result": {
+    "ok": false,
+    "protocolError": "Refused by NEAR: sending tokens needs a full-access key, and the vault has none. NEAR said: \"Access key requires full access\""
+   },
    "blocked": true,
-   "blockedBy": "Refused by NEAR: sending tokens needs a full-access key, and the vault has none. NEAR said: \"Access key requires full access\"",
-   "result": {}
+   "blockedBy": "Refused by NEAR: sending tokens needs a full-access key, and the vault has none. NEAR said: \"Access key requires full access\""
   },
   {
    "id": "outsider",
    "layer": "contract",
    "title": "Call execute() from another account with a valid quote",
    "how": "An outside account submits a genuine guard-signed quote. Only the agent key or the owner may execute.",
-   "blocked": true,
-   "blockedBy": "Refused by the contract: Only the vault's agent key or the owner can execute trades",
    "result": {
-    "txHash": "D45BX5uCvrajDFTNVkutEimF2B59y3cjnswN5k53dTzp",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/D45BX5uCvrajDFTNVkutEimF2B59y3cjnswN5k53dTzp"
-   }
+    "ok": false,
+    "txHash": "DKJLKg9gjm21UkzTXjN7zNKSsaFD8BZVL12pQup6wsJN",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/DKJLKg9gjm21UkzTXjN7zNKSsaFD8BZVL12pQup6wsJN",
+    "protocolError": "Refused by the contract: Only the vault's agent key or the owner can execute trades",
+    "logs": []
+   },
+   "blocked": true,
+   "blockedBy": "Refused by the contract: Only the vault's agent key or the owner can execute trades"
   },
   {
    "id": "tamper",
    "layer": "contract",
    "title": "Edit a signed quote to move more",
    "how": "The guard signed a $1.50 trade; the agent raises the amount before sending it.",
-   "blocked": true,
-   "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key.",
    "result": {
-    "txHash": "4YgBhKYqWCvaTFDTngHkmTyqTKGX8YKzVb2B5iWrNhYP",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/4YgBhKYqWCvaTFDTngHkmTyqTKGX8YKzVb2B5iWrNhYP"
-   }
+    "ok": true,
+    "txHash": "6g48UktqAwJgF1odQhiYsb4EpDfQazcssP3WoiKHTngN",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/6g48UktqAwJgF1odQhiYsb4EpDfQazcssP3WoiKHTngN",
+    "outcome": {
+     "id": "25",
+     "status": "Rejected",
+     "check": "GUARD_SIGNATURE",
+     "detail": "Quote is not signed by the IntentRail guard key."
+    },
+    "logs": [
+     "REJECTED GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key."
+    ]
+   },
+   "blocked": true,
+   "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key."
   },
   {
    "id": "leaked-size",
    "layer": "contract",
-   "title": "Steal the guard key and sign a $50 trade",
-   "how": "A leak nobody has noticed yet: a validly signed quote, far above the $10 per-trade cap.",
-   "blocked": true,
-   "blockedBy": "Contract check SIZE: $50 is over the $10 per-trade cap.",
+   "title": "Use the published guard key to sign a $50 trade",
+   "how": "Both keys are public: a validly signed quote, far above the $10 per-trade cap.",
    "result": {
-    "txHash": "DzW6AGsjrUP2FVasXTZUzzCdTWiSSLM3LtcjPmv85bar",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/DzW6AGsjrUP2FVasXTZUzzCdTWiSSLM3LtcjPmv85bar"
-   }
+    "ok": true,
+    "txHash": "ARbcgrAmGx7Ev51hpeCrTYp4Q5ZZxsdmojTXRqq9HYXm",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/ARbcgrAmGx7Ev51hpeCrTYp4Q5ZZxsdmojTXRqq9HYXm",
+    "outcome": {
+     "id": "26",
+     "status": "Rejected",
+     "check": "SIZE",
+     "detail": "$50 is over the $10 per-trade cap."
+    },
+    "logs": [
+     "REJECTED SIZE: $50 is over the $10 per-trade cap."
+    ]
+   },
+   "blocked": true,
+   "blockedBy": "Contract check SIZE: $50 is over the $10 per-trade cap."
   },
   {
    "id": "leaked-price",
    "layer": "contract",
-   "title": "Steal the guard key and sell at half price",
+   "title": "Sign a sale at half price",
    "how": "A validly signed swap whose minimum output is half the market rate.",
-   "blocked": true,
-   "blockedBy": "Contract check PRICE_FLOOR: The quote's minimum output is below the owner's price floor for this pair.",
    "result": {
-    "txHash": "EsSBGTXvd43xLLp4V72SXa6dcLQxoDiJGVXJ3DQTQ3mp",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/EsSBGTXvd43xLLp4V72SXa6dcLQxoDiJGVXJ3DQTQ3mp"
-   }
+    "ok": true,
+    "txHash": "EdYBKfD1FsfdA6exEyAbHV1G8PFRLtUxHm7ACjGLjnep",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/EdYBKfD1FsfdA6exEyAbHV1G8PFRLtUxHm7ACjGLjnep",
+    "outcome": {
+     "id": "27",
+     "status": "Rejected",
+     "check": "PRICE_FLOOR",
+     "detail": "The quote's minimum output is below the owner's price floor for this pair."
+    },
+    "logs": [
+     "REJECTED PRICE_FLOOR: The quote's minimum output is below the owner's price floor for this pair."
+    ]
+   },
+   "blocked": true,
+   "blockedBy": "Contract check PRICE_FLOOR: The quote's minimum output is below the owner's price floor for this pair."
   },
   {
    "id": "rotated",
    "layer": "contract",
    "title": "Use the guard key the owner already rotated out",
-   "how": "After the key-leak drill, quotes signed by the old key are worthless.",
-   "blocked": true,
-   "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key.",
+   "how": "The real guard key the owner rotated out in the key-leak drill. Its quotes are worthless now.",
    "result": {
-    "txHash": "FdvguLt2Qw8xo6FW6wE8TAsqLdds2GqhxyREMSA4wUGv",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/FdvguLt2Qw8xo6FW6wE8TAsqLdds2GqhxyREMSA4wUGv"
-   }
+    "ok": true,
+    "txHash": "v2mefvyoSYjef6d8Ru4UoinKcS8418bxXcFv2jmpBXa",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/v2mefvyoSYjef6d8Ru4UoinKcS8418bxXcFv2jmpBXa",
+    "outcome": {
+     "id": "28",
+     "status": "Rejected",
+     "check": "GUARD_SIGNATURE",
+     "detail": "Quote is not signed by the IntentRail guard key."
+    },
+    "logs": [
+     "REJECTED GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key."
+    ]
+   },
+   "blocked": true,
+   "blockedBy": "Contract check GUARD_SIGNATURE: Quote is not signed by the IntentRail guard key."
   },
   {
    "id": "replay",
    "layer": "contract",
    "title": "Replay the same signed quote",
    "how": "Send that exact quote and signature a second time.",
-   "blocked": true,
-   "blockedBy": "Contract check QUOTE_REPLAY: Quote was already used.",
    "result": {
-    "txHash": "FyDBxLcJnArEJbDMwX52LzVzMEhLKwyPPgG5eHTv5gP",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/FyDBxLcJnArEJbDMwX52LzVzMEhLKwyPPgG5eHTv5gP"
-   }
+    "ok": true,
+    "txHash": "WyVsv4SGQY8dzbSz2Yn2UDRZA6pNcbcUjqTGMboJyzv",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/WyVsv4SGQY8dzbSz2Yn2UDRZA6pNcbcUjqTGMboJyzv",
+    "outcome": {
+     "id": "29",
+     "status": "Rejected",
+     "check": "QUOTE_REPLAY",
+     "detail": "Quote was already used."
+    },
+    "logs": [
+     "REJECTED QUOTE_REPLAY: Quote was already used."
+    ]
+   },
+   "blocked": true,
+   "blockedBy": "Contract check QUOTE_REPLAY: Quote was already used."
   },
   {
    "id": "venue",
    "layer": "contract",
    "title": "Send a swap to the attacker's contract",
    "how": "A signed swap whose venue is an account the owner never approved.",
-   "blocked": true,
-   "blockedBy": "Contract check VENUE: intentrail-attacker-39ae84.testnet is not an allowed venue.",
    "result": {
-    "txHash": "GvjyDxR41B59WsTWQC3aWKksJRaEetfQtdrjCatn7N9V",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/GvjyDxR41B59WsTWQC3aWKksJRaEetfQtdrjCatn7N9V"
-   }
+    "ok": true,
+    "txHash": "2MGbnS7zkPB9Nv3PMK8y4TwQ3cjLKtYWiTXJp9zancdK",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/2MGbnS7zkPB9Nv3PMK8y4TwQ3cjLKtYWiTXJp9zancdK",
+    "outcome": {
+     "id": "30",
+     "status": "Rejected",
+     "check": "VENUE",
+     "detail": "intentrail-attacker-39ae84.testnet is not an allowed venue."
+    },
+    "logs": [
+     "REJECTED VENUE: intentrail-attacker-39ae84.testnet is not an allowed venue."
+    ]
+   },
+   "blocked": true,
+   "blockedBy": "Contract check VENUE: intentrail-attacker-39ae84.testnet is not an allowed venue."
+  },
+  {
+   "id": "loose",
+   "layer": "contract",
+   "title": "Sign a minimum 3% under the live pool",
+   "how": "Above the owner's fixed floor, so floors alone would let it through. The contract reads Ref's live quote itself before sending the swap.",
+   "result": {
+    "ok": true,
+    "txHash": "2T7WrYKP8mqdG3YEp5oPbqtWzq7jKUGk2gH6x5TN52oG",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/2T7WrYKP8mqdG3YEp5oPbqtWzq7jKUGk2gH6x5TN52oG",
+    "outcome": {
+     "id": "31",
+     "status": "Rejected",
+     "check": "POOL_QUOTE",
+     "detail": "The signed minimum output gives away 3.00% of what the pool pays right now. The limit is 1.00%."
+    },
+    "logs": [
+     "REJECTED POOL_QUOTE: The signed minimum output gives away 3.00% of what the pool pays right now. The limit is 1.00%."
+    ]
+   },
+   "blocked": true,
+   "blockedBy": "Contract check POOL_QUOTE: The signed minimum output gives away 3.00% of what the pool pays right now. The limit is 1.00%."
   },
   {
    "id": "underfill",
    "layer": "dex",
    "title": "Ask the pool for more than it can give",
    "how": "A swap whose minimum output is 2% above the pool price. The contract passes it on; Ref must refuse it and the vault gets its tokens back.",
-   "blocked": true,
-   "blockedBy": "Refused at the venue. ref-finance-101.testnet said: \"E68: slippage error\". The vault was refunded and its daily spend restored.",
    "result": {
-    "txHash": "5nV724vebtcNxRQLUqkPV6xqa2KnGAa99yyNGej8KwZK",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/5nV724vebtcNxRQLUqkPV6xqa2KnGAa99yyNGej8KwZK"
-   }
+    "ok": true,
+    "txHash": "7S8JvEbNTCaJfrZipGUbcuERp9JwN9AH4rtf3dWjFUme",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/7S8JvEbNTCaJfrZipGUbcuERp9JwN9AH4rtf3dWjFUme",
+    "outcome": {
+     "id": "32",
+     "status": "Executed",
+     "check": "OK",
+     "detail": "Passed every check. $1.06 sent to ref-finance-101.testnet."
+    },
+    "logs": [
+     "Transfer 300000000000000000000000 from intentrail-vault7-39ae84.testnet to ref-finance-101.testnet",
+     "Refund 300000000000000000000000 from ref-finance-101.testnet to intentrail-vault7-39ae84.testnet"
+    ]
+   },
+   "blocked": true,
+   "blockedBy": "Refused at the venue. ref-finance-101.testnet said: \"panicked at 'E68: slippage error', ref-exchange/src/simple_pool.rs:313:9\" The vault was refunded and its daily spend restored."
   },
   {
    "id": "honest",
    "layer": "none",
    "title": "An honest swap, for comparison",
    "how": "Sell 0.3 wNEAR for USDT on Ref Finance, within every limit. The agent needs nobody's permission.",
-   "blocked": false,
-   "blockedBy": "Ref filled it: 0.3000 wNEAR for 0.3725 USDT, paid to the vault.",
    "result": {
-    "txHash": "69bLyAjb8eSwW5WRvAFLYBwNd2RN7FCRp9zTc14X2JTr",
-    "explorerUrl": "https://testnet.nearblocks.io/txns/69bLyAjb8eSwW5WRvAFLYBwNd2RN7FCRp9zTc14X2JTr"
-   }
+    "ok": true,
+    "txHash": "DAwdZJk1G81YzUpLrZqieTVwbrZA7sTMjBBd4YATvx9P",
+    "explorerUrl": "https://testnet.nearblocks.io/txns/DAwdZJk1G81YzUpLrZqieTVwbrZA7sTMjBBd4YATvx9P",
+    "outcome": {
+     "id": "33",
+     "status": "Executed",
+     "check": "OK",
+     "detail": "Passed every check. $1.06 sent to ref-finance-101.testnet."
+    },
+    "logs": [
+     "Transfer 300000000000000000000000 from intentrail-vault7-39ae84.testnet to ref-finance-101.testnet",
+     "Swapped 300000000000000000000000 wrap.testnet for 372290658412091128072159 usdt.itachicara.testnet",
+     "Exchange ref-finance-101.testnet got 261658265505229871 shares, No referral fee",
+     "EVENT_JSON:{\"standard\":\"nep141\",\"version\":\"1.0.0\",\"event\":\"ft_transfer\",\"data\":[{\"old_owner_id\":\"ref-finance-101.testnet\",\"new_owner_id\":\"intentrail-vault7-39ae84.testnet\",\"amount\":\"372290658412091128072159\"}]}"
+    ]
+   },
+   "blocked": false,
+   "blockedBy": "Ref filled it: 0.3000 wNEAR for 0.3723 USDT, paid to the vault."
   }
  ]
 }

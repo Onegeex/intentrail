@@ -182,7 +182,7 @@ export function AttackDemo({ recorded }: { recorded: AttackRun }) {
             whileTap={{ scale: 0.97 }}
             className="min-h-12 rounded-full bg-ivory px-6 font-display text-xl font-black tracking-wide text-panel-deep disabled:opacity-60"
           >
-            {busy ? "Running on testnet…" : "Run all 12 again, live"}
+            {busy ? "Running on testnet…" : "Run all 13 again, live"}
           </motion.button>
           <p className="max-w-[28ch] text-xs text-ivory-dim sm:text-right">
             {busy ? "Sending real transactions. About a minute." : "8 on-chain, each with a transaction. 3 refused pre-chain by NEAR."}
