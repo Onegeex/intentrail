@@ -17,7 +17,9 @@ The rule: funds move only when the GuardVault contract agrees. Everything off-ch
 | The owner's key alone | Drain the vault | Withdrawals go only to the owner account, which an attacker holding the key controls. So they wait out the timelock, and a separate guardian can veto them and pause. Looser limits wait too. Exit floor: alone, the owner can swap into the stablecoin at once, but for no less than 90% of the last guard-signed rate for that pair (before any trade, 90% of the price floor). Anything lower needs the guardian's approval or the timelock. So an attacker can't push the pool and dump the vault into it. |
 | The guardian's key alone | Drain or unlock the vault | The guardian can only pause, veto, and approve a deep exit the owner asked for. It can't move funds, start an exit, resume trading or loosen anything. |
 | Owner and guardian together | Drain the vault | They can, after the timelock, or exit at any price at once. This is the trust root. On mainnet both should be multisigs held by different people (not built yet), and the timelock should be a day. |
-| A fully compromised guard server | Lose money slowly | It can sign trades down to the owner's price floor, up to the autonomy limit per trade and the daily cap per day. The site shows the live dollar figure. |
+| A fully compromised guard server | Lose money slowly | The contract reads the Ref pool itself: a signed minimum more than 1% under the live output is refused (`POOL_QUOTE`), a pool more than 3% from the vault's own reference holds the trade (`PRICE_SHOCK`), and value given up against the higher of reference and live price is capped per key per day (`LEAK_BUDGET`, $0.20). Each refusal halves the key's autonomy. Worst case: about $0.04 a trade and $0.20 a day per key, versus about $7.60 a day with fixed floors alone. |
+| A compromised guard that lies about value | Understate a trade's USD size to stretch caps | The contract values the trade on the pool through the dollar token (`usd_tokens`) and uses the higher of that and the guard's claim. |
+| Everyone (the public challenge) | Use the published agent and guard keys | They are real keys on the vault, in their own lane: own $20 daily cap, own leak budget, own strikes. They can't sign for the real guard or touch the real agent's lane. Rotate or remove them with `set_challenge`. |
 | An agent's self-reported data | Mark its own trade as safe | The guard API ignores fee, stop-loss, slippage and vote claims and computes them from a live NEAR Intents quote. |
 | The vault deployer | Keep a back door | The vault's only full-access key is deleted at the end of deployment (`scripts/deploy-testnet.sh`). Anyone can list its keys on-chain. |
 | Missing live data | Price a trade on stale numbers | The guard fails closed: no live price or quote means no signature. |
@@ -29,7 +31,7 @@ The owner (`intentrail-owner-39ae84.testnet` on testnet) is the human in charge.
 
 ## Secrets
 
-`GUARD_SIGNING_KEY` and `AGENT_PRIVATE_KEY` live only in the host's encrypted environment variables. No key, seed phrase or private key is in the repository, logs or client bundle. Neither key can move funds on its own.
+`GUARD_SIGNING_KEY` and `AGENT_PRIVATE_KEY` live only in the host's encrypted environment variables. Neither key can move funds on its own. The only keys in the repository are the challenge pair in `src/data/challenge.json`, published on purpose.
 
 ## The $1 mainnet swap
 
