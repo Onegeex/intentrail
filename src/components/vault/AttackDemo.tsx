@@ -185,7 +185,7 @@ export function AttackDemo({ recorded }: { recorded: AttackRun }) {
             {busy ? "Running on testnet…" : "Run all 13 again, live"}
           </motion.button>
           <p className="max-w-[28ch] text-xs text-ivory-dim sm:text-right">
-            {busy ? "Sending real transactions. About a minute." : "8 on-chain, each with a transaction. 3 refused pre-chain by NEAR."}
+            {busy ? "Sending real transactions. About a minute." : "9 on-chain, each with a transaction. 3 refused pre-chain by NEAR."}
           </p>
         </div>
       </div>
