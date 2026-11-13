@@ -53,6 +53,10 @@ export const CHECK_LABEL: Record<string, string> = {
   MIN_OUTPUT: "Minimum output",
   TIMELOCK: "Timelock",
   POLICY: "Policy",
+  POOL_QUOTE: "Live pool check",
+  PRICE_SHOCK: "Price-shock hold",
+  LEAK_BUDGET: "Daily leak budget",
+  GAS: "Enough gas to check the pool",
 };
 
 export const STATUS_LABEL: Record<string, string> = {

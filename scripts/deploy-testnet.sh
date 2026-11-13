@@ -12,6 +12,7 @@
 #   ATTACKER_ID / ATTACKER_PK               an outside account used by the attack demo
 #   TIMELOCK_MS                             delay for loosening changes and withdrawals (default 600000 = 10 min on testnet; use a day on mainnet)
 #   AGENT_ALLOWANCE                         agent key gas budget in yoctoNEAR (default 3 NEAR)
+#   CHALLENGE_PK, CHALLENGE_GUARD_PK_B64    optional published challenge key pair
 set -euo pipefail
 NET="network-config testnet"
 WASM=contract/target/near/intentrail_vault.wasm
@@ -59,7 +60,12 @@ POLICY=$(cat <<JSON
     {"token_in": "$USDT", "token_out": "$WRAP", "min_out_per_in_e6": "750000"}
   ],
   "exit_tokens": ["$USDT"],
-  "exit_max_discount_bps": 1000
+  "exit_max_discount_bps": 1000,
+  "max_slippage_bps": 100,
+  "shock_bps": 300,
+  "leak_budget_usd_cents": "20",
+  "challenge_daily_cap_usd_cents": "2000",
+  "usd_tokens": [["$USDT", 24]]
 }
 JSON
 )
@@ -76,6 +82,10 @@ owner_call register_token "{\"token\":\"$REF\"}" '0.01 NEAR'
 
 say "Owner installs the agent's function-call key (execute only)"
 owner_call set_agent_key "{\"public_key\":\"$AGENT_PK\",\"allowance\":\"$AGENT_ALLOWANCE\"}" '0 NEAR'
+if [ -n "${CHALLENGE_PK:-}" ]; then
+  # Optional: publish a challenge key pair anyone can attack with.
+  owner_call set_challenge "{\"public_key\":\"$CHALLENGE_PK\",\"guard_key\":\"$CHALLENGE_GUARD_PK_B64\",\"allowance\":\"${CHALLENGE_ALLOWANCE:-2000000000000000000000000}\"}" '0 NEAR'
+fi
 
 say "Delete the vault's only full-access key. From here on, only contract code moves funds."
 near account delete-keys "$VAULT_ID" public-keys "$VAULT_DEPLOYER_PK" $NET \

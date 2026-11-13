@@ -1,0 +1,7 @@
+{
+ "vault": "intentrail-vault7-39ae84.testnet",
+ "challenge_agent_private_key": "ed25519:2fmRRQpQb5QdanbmrdghVDc1f4G9Zyr2ZEndGvis33Hj2Hej4d29YrcUPX7eCgsf8KYWeuTWXTbitKtRwEiVWnwg",
+ "challenge_agent_public_key": "ed25519:4uzSfFBGjnFT66Xd3PBxMmPWyZYtKtnZFAYqx4RLuw8a",
+ "challenge_guard_seed_b64": "ZzuHDVJmyQnw5SIcSecjo1jpmPqKtdk4tHfbjq/s6ek=",
+ "challenge_guard_public_b64": "iAnPWStErR0sXyKb/Iy68GcLVLKOKAdv3ftDD6+1CIE="
+}

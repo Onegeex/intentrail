@@ -1,4 +1,5 @@
 import { createPrivateKey, randomInt, sign as edSign } from "crypto";
+import challenge from "@/data/challenge.json";
 import {
   Account,
   FailoverRpcProvider,
@@ -19,7 +20,7 @@ import {
  * Neither key can move funds on its own. The contract decides.
  */
 
-export const VAULT_ID = process.env.VAULT_ID || "intentrail-vault5-39ae84.testnet";
+export const VAULT_ID = process.env.VAULT_ID || "intentrail-vault7-39ae84.testnet";
 export const VAULT_OWNER_ID = process.env.VAULT_OWNER_ID || "intentrail-owner-39ae84.testnet";
 export const WRAP_ID = "wrap.testnet";
 export const REF_ID = "ref-finance-101.testnet";
@@ -42,8 +43,9 @@ export function rpc() {
 }
 
 /** The agent key's remaining gas budget, in NEAR. */
-export function agentBudgetNear(snap: VaultSnapshot): number {
-  const k = snap.keys.find((x) => !x.fullAccess);
+export function agentBudgetNear(snap: VaultSnapshot, who: "agent" | "challenge" = "agent"): number {
+  const cpk = challenge.challenge_agent_public_key;
+  const k = snap.keys.find((x) => !x.fullAccess && (who === "challenge" ? x.publicKey === cpk : x.publicKey !== cpk));
   if (!k?.allowanceYocto) return 0;
   return Number(BigInt(k.allowanceYocto) / BigInt(1e18)) / 1e6;
 }
@@ -69,6 +71,11 @@ export type VaultPolicy = {
   price_floors?: { token_in: string; token_out: string; min_out_per_in_e6: string }[];
   exit_tokens?: string[];
   exit_max_discount_bps?: number;
+  max_slippage_bps?: number;
+  shock_bps?: number;
+  leak_budget_usd_cents?: string;
+  challenge_daily_cap_usd_cents?: string;
+  usd_tokens?: [string, number][];
 };
 
 export type VaultEvent = {
@@ -96,8 +103,21 @@ export type VaultSnapshot = {
   pendingWithdrawals: { id: string; token: string; amount: string; eta_ms: string }[];
   guardianId: string | null;
   timelockMs: number;
+  /** Per key: spend, value given up, refusal strikes and current autonomy. */
+  lanes: LaneView[];
   asOf: string;
 };
+
+export type LaneView = {
+  lane: "agent" | "challenge";
+  spent_today_cents: string;
+  leak_today_cents: string;
+  strikes: number;
+  autonomy_usd_cents: string;
+};
+
+/** The published challenge key pair. Anyone may use it; that's the point. */
+export const CHALLENGE = challenge;
 
 async function view<T>(method: string, args: Record<string, unknown> = {}, contractId = VAULT_ID): Promise<T> {
   const r = await rpc().callFunction({ contractId, method, args });
@@ -121,6 +141,7 @@ export async function getVaultSnapshot(): Promise<VaultSnapshot> {
     view<VaultSnapshot["pendingWithdrawals"]>("get_pending_withdrawals").catch(() => []),
     view<string>("get_guardian").catch(() => null),
   ]);
+  const lanes = await view<LaneView[]>("get_lanes").catch(() => [] as LaneView[]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const keys = ((keyList as any)?.keys ?? []).map((k: any) => {
@@ -150,6 +171,7 @@ export async function getVaultSnapshot(): Promise<VaultSnapshot> {
     pendingWithdrawals: withdrawals ?? [],
     guardianId: guardian ?? null,
     timelockMs: Number(timelock ?? 0),
+    lanes,
     asOf: new Date().toISOString(),
   };
 }
@@ -174,8 +196,15 @@ export type VaultQuote = {
   expires_at_ms: string;
 };
 
-function guardKey(which: "current" | "leaked" = "current") {
-  const seedB64 = which === "leaked" ? process.env.GUARD_LEAKED_KEY || process.env.GUARD_SIGNING_KEY : process.env.GUARD_SIGNING_KEY;
+export type GuardWhich = "current" | "leaked" | "challenge";
+
+function guardKey(which: GuardWhich = "current") {
+  const seedB64 =
+    which === "challenge"
+      ? challenge.challenge_guard_seed_b64
+      : which === "leaked"
+        ? process.env.GUARD_LEAKED_KEY || process.env.GUARD_SIGNING_KEY
+        : process.env.GUARD_SIGNING_KEY;
   if (!seedB64) throw new Error("GUARD_SIGNING_KEY not configured");
   const seed = Buffer.from(seedB64, "base64");
   if (seed.length !== 32) throw new Error("GUARD_SIGNING_KEY must be a 32-byte seed");
@@ -185,7 +214,7 @@ function guardKey(which: "current" | "leaked" = "current") {
 }
 
 /** Sign the exact JSON string the contract will verify. */
-export function signQuote(q: VaultQuote, which: "current" | "leaked" = "current"): { quoteJson: string; signatureB64: string } {
+export function signQuote(q: VaultQuote, which: GuardWhich = "current"): { quoteJson: string; signatureB64: string } {
   const quoteJson = JSON.stringify(q);
   const sig = edSign(null, Buffer.from(quoteJson, "utf8"), guardKey(which));
   return { quoteJson, signatureB64: sig.toString("base64") };
@@ -205,8 +234,10 @@ function outsiderAccount() {
   return new Account(ATTACKER_ID, new JsonRpcProvider({ url: RPC_URLS[0] }) as never, KeyPairSigner.fromSecretKey(sk as KeyPairString));
 }
 
-function agentAccount() {
-  const sk = process.env.AGENT_PRIVATE_KEY;
+export type Signer = "agent" | "challenge";
+
+function agentAccount(who: Signer = "agent") {
+  const sk = who === "challenge" ? challenge.challenge_agent_private_key : process.env.AGENT_PRIVATE_KEY;
   if (!sk) throw new Error("AGENT_PRIVATE_KEY not configured");
   const signer = KeyPairSigner.fromSecretKey(sk as KeyPairString);
   // The agent signs as the vault account, using its function-call key.
@@ -313,16 +344,16 @@ export async function venueResult(txHash: string): Promise<{ filled: boolean; re
  * Prepaid gas counts against the agent key's allowance and NEAR doesn't give
  * back the unused part, so each call reserves only what it needs.
  */
-export const GAS = { refusal: "30000000000000", wrap: "100000000000000", swap: "250000000000000" } as const;
+export const GAS = { refusal: "30000000000000", wrap: "100000000000000", swap: "300000000000000" } as const;
 
 export async function agentExecute(
   quoteJson: string,
   signatureB64: string,
-  as: "agent" | "outsider" = "agent",
+  as: Signer | "outsider" = "agent",
   gas: string = GAS.swap,
 ): Promise<TxResult> {
   try {
-    const acct = as === "agent" ? agentAccount() : outsiderAccount();
+    const acct = as === "outsider" ? outsiderAccount() : agentAccount(as);
     const r = await acct.signAndSendTransaction({
       receiverId: VAULT_ID,
       actions: [
@@ -349,8 +380,9 @@ export async function agentRawCall(opts: {
   args?: Record<string, unknown>;
   depositYocto?: string;
   transferYocto?: string;
+  as?: Signer;
 }): Promise<TxResult> {
-  const acct = agentAccount();
+  const acct = agentAccount(opts.as ?? "agent");
   try {
     const action = opts.transferYocto
       ? actions.transfer(BigInt(opts.transferYocto))
@@ -366,8 +398,9 @@ export async function agentRawCall(opts: {
 export async function agentAttempt(
   kind: "withdraw" | "direct_ft_transfer" | "native_transfer" | "change_policy",
   attacker: string,
+  as: Signer = "agent",
 ): Promise<TxResult> {
-  const acct = agentAccount();
+  const acct = agentAccount(as);
   try {
     let r: unknown;
     if (kind === "withdraw") {

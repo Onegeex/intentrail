@@ -16,7 +16,7 @@ import type { VaultSnapshot } from "@/lib/vault";
 
 const HEADLINE = ["Your agent can trade.", "It can't drain", "the wallet."];
 const SITE = "https://intentrail-neon.vercel.app";
-const VAULT_FALLBACK = "intentrail-vault5-39ae84.testnet";
+const VAULT_FALLBACK = "intentrail-vault7-39ae84.testnet";
 
 const SNIPPET = `// Send only the trade. The guard prices it itself.
 const res = await fetch("${SITE}/api/guard/check", {
@@ -155,10 +155,10 @@ function CountUp({ to, decimals = 0, prefix = "" }: { to: number; decimals?: num
 function ProofStrip({ attack, worstCase, vaultId, tests }: { attack: AttackRun; worstCase: WorstCase; vaultId: string; tests: number }) {
   const refused = attack.attempts.filter((a) => a.blocked).length;
   const tiles = [
-    { big: <CountUp to={refused} />, unit: `of ${refused} attacks refused`, note: "8 on-chain + 3 pre-chain, this run", href: "#attack", tone: "text-danger" },
+    { big: <CountUp to={refused} />, unit: `of ${refused} attacks refused`, note: "9 on-chain + 3 pre-chain, this run", href: "#attack", tone: "text-danger" },
     { big: <CountUp to={tests} />, unit: "contract tests passing", note: "Bypasses, floors, timelocks, guardian, exits", href: "#how", tone: "text-proceed" },
     worstCase
-      ? { big: <CountUp to={worstCase.perDayUsd} decimals={2} prefix="$" />, unit: "a day, worst case", note: `If our guard server is hacked: ${worstCase.worstGapPct}% × $${worstCase.dailyCapUsd} cap`, href: "#how", tone: "text-caution" }
+      ? { big: <CountUp to={worstCase.perDayUsd} decimals={2} prefix="$" />, unit: "a day, worst case", note: `Per key, if our guard server is hacked: the leak budget`, href: "#how", tone: "text-caution" }
       : { big: <span>$100</span>, unit: "daily cap", note: "Set by the owner, enforced by the contract", href: "#how", tone: "text-caution" },
     { big: <span>1</span>, unit: "vault for every demo", note: vaultId, href: `https://testnet.nearblocks.io/address/${vaultId}`, tone: "text-points" },
   ];
@@ -179,6 +179,7 @@ function ProofStrip({ attack, worstCase, vaultId, tests }: { attack: AttackRun; 
 
 const CHAPTERS = [
   ["attack", "Attacks"],
+  ["challenge", "Take the keys"],
   ["agent", "Hijack it"],
   ["how", "How it works"],
   ["drills", "Drills"],
@@ -308,6 +309,7 @@ export function HomeClient({
   drills,
   status,
   whyNear,
+  challenge,
   llmConfigured,
 }: {
   vault: VaultSnapshot | null;
@@ -321,6 +323,7 @@ export function HomeClient({
   drills: React.ReactNode;
   status: React.ReactNode;
   whyNear: React.ReactNode;
+  challenge: React.ReactNode;
   llmConfigured: boolean;
 }) {
   const vaultId = vault?.vaultId ?? VAULT_FALLBACK;
@@ -333,23 +336,27 @@ export function HomeClient({
         <Section
           id="attack"
           title="We gave the agent's key to an attacker."
-          lede="Eleven real attempts to take money out of the vault, and one honest trade for comparison. Each attack is stopped by one of three layers. Click any card for how it worked."
+          lede="Twelve real attempts to take money out of the vault, and one honest trade for comparison. Each attack is stopped by one of three layers. Click any card for how it worked."
         >
           <AttackDemo recorded={recordedAttack} />
         </Section>
 
+        <div id="challenge" className="scroll-mt-32">
+          {challenge}
+        </div>
+
         <Section
           id="agent"
           title="Hijack the agent yourself."
-          lede="A real language model on NEAR AI Cloud holds the vault's agent key. We use an abliterated model, one with its refusals removed, and tell it to obey: it's the worst-case agent. In this mode the guard is treated as hacked too, so it signs whatever the model asks for. Only the contract stands in the way."
+          lede="A real language model on NEAR AI Cloud holds the vault's agent key. We use an abliterated model, one with its refusals removed, and tell it to obey: it's the worst-case agent. In this mode it holds the published challenge keys, agent and guard, so the guard signs whatever the model asks for. Only the contract stands in the way."
         >
           <AgentChat configured={llmConfigured} recorded={recordedLlm} />
           <p className="max-w-4xl rounded-2xl border border-rule bg-panel-deep p-4 text-sm leading-relaxed text-ivory-dim">
             <span className="font-semibold text-ivory">Why PRICE_FLOOR and not SIZE for the $500 sale?</span> The contract
             reports the first check that fails, in this order: caller, kill switch, guard signature, vault, expiry, replay,
-            token allowlist, venue, trade shape, minimum output and price floor, size caps, fee ceiling, daily cap, then owner
-            approval. Selling $500 &quot;at any price&quot; fails the price floor before it reaches the size cap. A large trade at a
-            fair price is refused at SIZE: see &quot;Steal the guard key and sign a $50 trade&quot; in the attack board.
+            token allowlist, venue, trade shape, minimum output and price floor, size caps, fee ceiling, daily cap. For a swap it
+            then reads the pool: value and size again, live pool check, price shock, leak budget. Last comes owner approval. Selling $500 &quot;at any price&quot; fails the price floor before it reaches the size cap. A large trade at a
+            fair price is refused at SIZE: see &quot;Use the published guard key to sign a $50 trade&quot; in the attack board.
           </p>
         </Section>
 

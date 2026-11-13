@@ -1,4 +1,6 @@
 "use client";
+import challengeKeys from "@/data/challenge.json";
+const CHALLENGE_PK = challengeKeys.challenge_agent_public_key;
 
 import { motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
@@ -82,7 +84,7 @@ export function VaultPanel({ initial, ownerId, worstCase }: { initial: VaultSnap
   const p = snap.policy;
   const cap = Number(p.daily_cap_usd_cents);
   const pct = cap ? Math.min(100, (snap.spentTodayCents / cap) * 100) : 0;
-  const agentKey = snap.keys.find((k) => !k.fullAccess);
+  const agentKey = snap.keys.find((k) => !k.fullAccess && k.publicKey !== CHALLENGE_PK);
   const fullKeys = snap.keys.filter((k) => k.fullAccess).length;
   const budget = agentKey?.allowanceYocto ? Number(BigInt(agentKey.allowanceYocto) / BigInt(1e18)) / 1e6 : 0;
   const lowBudget = budget < 0.1;
