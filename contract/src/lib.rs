@@ -29,14 +29,25 @@
 //! 8. Withdrawals wait for the same timelock. A separate guardian account can
 //!    pause trading and veto anything queued, but can never move funds. A
 //!    stolen owner key alone can't drain the vault before the guardian sees it.
-//! 9. In a crash the owner can always swap into an exit token (a stablecoin)
-//!    at once, ignoring price floors. The funds stay in the vault.
+//! 9. In a crash the owner can swap into an exit token (a stablecoin) at once,
+//!    down to an exit floor. The funds stay in the vault.
+//! 10. Trading-specific defenses, checked against the venue itself rather than
+//!    the guard: before every swap the contract asks Ref Finance for the live
+//!    pool quote. A minimum output that gives away more than `max_slippage_bps`
+//!    of it is refused (POOL_QUOTE). A live price far from the vault's own
+//!    on-chain reference price is held for the owner (PRICE_SHOCK). Each key
+//!    has a daily budget for value given up against that reference
+//!    (LEAK_BUDGET), so many small "fair" trades can't bleed the vault.
+//! 11. Refusals cost trust: every refused trade halves what that key may do
+//!    without the owner, recovering over time.
+//! 12. A second, published key pair (challenge agent + challenge guard) lets
+//!    anyone attack the vault with both keys in hand, under its own caps.
 
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::store::{IterableMap, LookupSet};
 use near_sdk::{
-    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseResult,
-    PublicKey,
+    env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseOrValue,
+    PromiseResult, PublicKey,
 };
 
 const NEAR_TOKEN: &str = "near";
@@ -46,6 +57,16 @@ const GAS_FOR_CALL: Gas = Gas::from_tgas(60);
 /// ft_transfer_call -> Ref swap -> transfer the output back needs room.
 const GAS_FOR_SWAP: Gas = Gas::from_tgas(200);
 const GAS_FOR_CALLBACK: Gas = Gas::from_tgas(15);
+/// Ref's get_return view.
+const GAS_FOR_POOL_VIEW: Gas = Gas::from_tgas(10);
+/// What on_pool_quote needs to dispatch a swap and its callback.
+const GAS_FOR_POOL_CB_MIN: Gas = Gas::from_tgas(230);
+/// One refusal strike wears off after this long.
+const STRIKE_DECAY_MS: u64 = 15 * 60_000;
+const MAX_STRIKES: u32 = 8;
+/// Lane 0: the agent (and the owner). Lane 1: the published challenge keys.
+const LANE_AGENT: usize = 0;
+const LANE_CHALLENGE: usize = 1;
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 /// Gas allowance attached to the agent key. Fees only; it can't move funds.
 const DEFAULT_AGENT_ALLOWANCE: NearToken = NearToken::from_millinear(500);
@@ -108,10 +129,66 @@ pub struct Policy {
     /// Deeper exits need the guardian, or wait out the timelock.
     #[serde(default = "default_exit_discount")]
     pub exit_max_discount_bps: u32,
+    /// A swap's minimum output may give away at most this much of Ref's live quote.
+    #[serde(default = "default_max_slippage")]
+    pub max_slippage_bps: u32,
+    /// A live price this far from the vault's reference price waits for the owner.
+    #[serde(default = "default_shock")]
+    pub shock_bps: u32,
+    /// Per key, per day: value given up against the reference price, in USD cents.
+    #[serde(default = "default_leak_budget")]
+    pub leak_budget_usd_cents: U64,
+    /// Daily cap for the published challenge keys.
+    #[serde(default = "default_challenge_cap")]
+    pub challenge_daily_cap_usd_cents: U64,
 }
 
 fn default_exit_discount() -> u32 {
     1_000
+}
+fn default_max_slippage() -> u32 {
+    100
+}
+fn default_shock() -> u32 {
+    300
+}
+fn default_leak_budget() -> U64 {
+    U64(50)
+}
+fn default_challenge_cap() -> U64 {
+    U64(2_000)
+}
+
+/// Per-key accounting.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug, Default)]
+pub struct Lane {
+    pub day: u64,
+    pub spent_today_cents: u64,
+    pub leak_today_cents: u64,
+    pub strikes: u32,
+    pub strike_at_ms: u64,
+}
+
+/// The vault's own reference price for a pair: an average of Ref's live
+/// quotes on the swaps it accepted.
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Debug)]
+pub struct PoolRef {
+    pub token_in: AccountId,
+    pub token_out: AccountId,
+    pub out_per_in_e6: U128,
+    pub at_ms: U64,
+}
+
+#[near(serializers = [json])]
+#[derive(Debug)]
+pub struct LaneView {
+    pub lane: String,
+    pub spent_today_cents: U64,
+    pub leak_today_cents: U64,
+    pub strikes: u32,
+    pub autonomy_usd_cents: U64,
 }
 
 /// `min_amount_out * 1e6 >= amount_in * min_out_per_in_e6`, in raw units.
@@ -201,6 +278,8 @@ pub struct PendingTrade {
     pub venue: AccountId,
     pub usd_cents: U64,
     pub created_ms: U64,
+    #[serde(default)]
+    pub lane: u8,
 }
 
 #[near(serializers = [json, borsh])]
@@ -230,9 +309,11 @@ pub struct GuardVault {
     /// ed25519 public key (32 bytes) of the IntentRail guard server.
     guard_key: Vec<u8>,
     agent_key: Option<PublicKey>,
+    challenge_key: Option<PublicKey>,
+    challenge_guard_key: Option<Vec<u8>>,
     policy: Policy,
-    day: u64,
-    spent_today_cents: u64,
+    lanes: Vec<Lane>,
+    pool_refs: Vec<PoolRef>,
     used_nonces: LookupSet<u64>,
     pending: IterableMap<u64, PendingTrade>,
     next_id: u64,
@@ -258,9 +339,11 @@ impl GuardVault {
             guardian,
             guard_key: guard_key.0,
             agent_key: None,
+            challenge_key: None,
+            challenge_guard_key: None,
             policy,
-            day: env::block_timestamp_ms() / DAY_MS,
-            spent_today_cents: 0,
+            lanes: vec![Lane { day: env::block_timestamp_ms() / DAY_MS, ..Default::default() }; 2],
+            pool_refs: Vec::new(),
             used_nonces: LookupSet::new(b"n"),
             pending: IterableMap::new(b"p"),
             next_id: 1,
@@ -283,85 +366,158 @@ impl GuardVault {
     ///
     /// `quote_json` is the exact string the guard signed; `signature` is the
     /// 64-byte ed25519 signature over its UTF-8 bytes.
-    pub fn execute(&mut self, quote_json: String, signature: Base64VecU8) -> Outcome {
-        self.assert_agent_or_owner();
+    pub fn execute(&mut self, quote_json: String, signature: Base64VecU8) -> PromiseOrValue<Outcome> {
+        let (strike_lane, lane, guard_key) = self.caller_lane();
         self.roll_day();
         let id = self.take_id();
+        let v = |o: Outcome| PromiseOrValue::Value(o);
 
         if self.policy.kill_switch {
-            return self.reject(id, "KILL_SWITCH", "The owner has stopped all trading.", None);
+            return v(self.reject_in(strike_lane, id, "KILL_SWITCH", "The owner has stopped all trading.", None));
         }
 
         // 1. The guard must have signed exactly this quote.
         let sig: [u8; 64] = match signature.0.as_slice().try_into() {
             Ok(s) => s,
-            Err(_) => return self.reject(id, "GUARD_SIGNATURE", "Signature is not 64 bytes.", None),
+            Err(_) => return v(self.reject_in(strike_lane, id, "GUARD_SIGNATURE", "Signature is not 64 bytes.", None)),
         };
-        let pk: [u8; 32] = self.guard_key.as_slice().try_into().unwrap();
+        let pk: [u8; 32] = guard_key.as_slice().try_into().unwrap();
         if !env::ed25519_verify(&sig, quote_json.as_bytes(), &pk) {
-            return self.reject(
+            return v(self.reject_in(
+                strike_lane,
                 id,
                 "GUARD_SIGNATURE",
                 "Quote is not signed by the IntentRail guard key.",
                 None,
-            );
+            ));
         }
         let q: Quote = match near_sdk::serde_json::from_str(&quote_json) {
             Ok(q) => q,
-            Err(_) => return self.reject(id, "QUOTE_FORMAT", "Signed quote is not valid JSON.", None),
+            Err(_) => return v(self.reject_in(strike_lane, id, "QUOTE_FORMAT", "Signed quote is not valid JSON.", None)),
         };
 
         // 2. Bound to this vault, fresh, and single-use.
         if q.vault != env::current_account_id() {
-            return self.reject(id, "QUOTE_VAULT", "Quote was signed for a different vault.", Some(&q));
+            return v(self.reject_in(strike_lane, id, "QUOTE_VAULT", "Quote was signed for a different vault.", Some(&q)));
         }
         if env::block_timestamp_ms() > q.expires_at_ms.0 {
-            return self.reject(id, "QUOTE_EXPIRED", "Quote has expired.", Some(&q));
+            return v(self.reject_in(strike_lane, id, "QUOTE_EXPIRED", "Quote has expired.", Some(&q)));
         }
         if self.used_nonces.contains(&q.nonce.0) {
-            return self.reject(id, "QUOTE_REPLAY", "Quote was already used.", Some(&q));
+            return v(self.reject_in(strike_lane, id, "QUOTE_REPLAY", "Quote was already used.", Some(&q)));
         }
 
         // 3. Hard limits the guard can't override.
-        if let Err((check, detail)) = self.check_limits(&q) {
-            self.used_nonces.insert(q.nonce.0);
-            return self.reject(id, check, &detail, Some(&q));
-        }
         self.used_nonces.insert(q.nonce.0);
-        if let TradeKind::RefSwap { .. } = q.kind {
-            self.record_rate(&q.token_in, &q.token_out, q.amount_in, q.min_amount_out);
+        if let Err((check, detail)) = self.check_limits(&q, lane) {
+            return v(self.reject_in(strike_lane, id, check, &detail, Some(&q)));
         }
 
-        // 4. Above the threshold a person decides.
-        if q.usd_cents.0 > self.policy.approval_above_usd_cents.0 {
-            let p = PendingTrade {
-                id: U64(id),
-                kind: q.kind.clone(),
-                token_in: q.token_in.clone(),
-                token_out: q.token_out.clone(),
-                amount_in: q.amount_in,
-                min_amount_out: q.min_amount_out,
-                venue: q.venue.clone(),
-                usd_cents: q.usd_cents,
-                created_ms: U64(env::block_timestamp_ms()),
-            };
-            self.pending.insert(id, p);
-            self.stats.pending += 1;
-            let detail = format!(
-                "${} is above the ${} autonomy limit. Waiting for the owner.",
-                cents(q.usd_cents.0),
-                cents(self.policy.approval_above_usd_cents.0)
+        // 4. Swaps: ask the venue itself what this trade pays right now.
+        if let TradeKind::RefSwap { pool_id } = q.kind {
+            let budget = env::prepaid_gas()
+                .saturating_sub(env::used_gas())
+                .saturating_sub(GAS_FOR_POOL_VIEW)
+                .saturating_sub(Gas::from_tgas(20));
+            if budget < GAS_FOR_POOL_CB_MIN {
+                return v(self.reject_in(None, id, "GAS", "Attach 300 Tgas so the contract can check the pool before swapping.", Some(&q)));
+            }
+            let view = Promise::new(q.venue.clone()).function_call(
+                "get_return".to_string(),
+                near_sdk::serde_json::json!({
+                    "pool_id": pool_id,
+                    "token_in": q.token_in,
+                    "amount_in": q.amount_in,
+                    "token_out": q.token_out,
+                })
+                .to_string()
+                .into_bytes(),
+                NearToken::from_yoctonear(0),
+                GAS_FOR_POOL_VIEW,
             );
-            self.log_event(id, Status::PendingApproval, "OWNER_APPROVAL", &detail, Some(&q));
-            return Outcome { id: U64(id), status: Status::PendingApproval, check: "OWNER_APPROVAL".into(), detail };
+            let cb = Promise::new(env::current_account_id()).function_call(
+                "on_pool_quote".to_string(),
+                near_sdk::serde_json::json!({
+                    "id": U64(id),
+                    "quote": q,
+                    "lane": lane as u8,
+                    "strike": strike_lane.is_some(),
+                })
+                .to_string()
+                .into_bytes(),
+                NearToken::from_yoctonear(0),
+                budget,
+            );
+            return PromiseOrValue::Promise(view.then(cb));
         }
 
-        self.spent_today_cents += q.usd_cents.0;
-        self.dispatch(id, &q.kind, &q.token_in, &q.token_out, q.amount_in, q.min_amount_out, &q.venue, q.usd_cents.0);
-        let detail = format!("Passed every check. ${} sent to {}.", cents(q.usd_cents.0), q.venue);
-        self.log_event(id, Status::Executed, "OK", &detail, Some(&q));
-        self.stats.executed += 1;
-        Outcome { id: U64(id), status: Status::Executed, check: "OK".into(), detail }
+        // Wrap / unwrap: 1:1, nothing to price.
+        v(self.finish(id, &q, lane, 0))
+    }
+
+    /// Second half of a swap, with Ref's live quote in hand.
+    #[private]
+    #[allow(deprecated)]
+    pub fn on_pool_quote(&mut self, id: U64, quote: Quote, lane: u8, strike: bool) -> Outcome {
+        let q = quote;
+        let lane = lane as usize;
+        let strike_lane = if strike { Some(lane) } else { None };
+        self.roll_day();
+        let live_out = match env::promise_result(0) {
+            PromiseResult::Successful(bytes) => near_sdk::serde_json::from_slice::<U128>(&bytes).ok().map(|x| x.0),
+            PromiseResult::Failed => None,
+        };
+        let Some(live_out) = live_out.filter(|x| *x > 0) else {
+            return self.reject_in(None, id.0, "POOL_QUOTE", "Couldn't read a live quote from the pool, so the swap was not sent.", Some(&q));
+        };
+        let p = &self.policy;
+
+        // POOL_QUOTE: the minimum output can't give away more than max_slippage_bps of the live quote.
+        if q.min_amount_out.0.saturating_mul(10_000) < live_out.saturating_mul(10_000 - p.max_slippage_bps.min(10_000) as u128) {
+            let give = (live_out - q.min_amount_out.0.min(live_out)) * 10_000 / live_out;
+            let detail = format!(
+                "The signed minimum output gives away {}.{:02}% of what the pool pays right now. The limit is {}.{:02}%.",
+                give / 100, give % 100, p.max_slippage_bps / 100, p.max_slippage_bps % 100
+            );
+            return self.reject_in(strike_lane, id.0, "POOL_QUOTE", &detail, Some(&q));
+        }
+
+        let live_rate = live_out.saturating_mul(1_000_000) / q.amount_in.0.max(1);
+        let min_rate = q.min_amount_out.0.saturating_mul(1_000_000) / q.amount_in.0.max(1);
+        let reference = self.pool_ref(&q.token_in, &q.token_out);
+
+        // PRICE_SHOCK: a live price far from the vault's own reference waits for the owner.
+        if let Some(r) = reference {
+            let dev = if live_rate > r { live_rate - r } else { r - live_rate } * 10_000 / r.max(1);
+            if dev > p.shock_bps as u128 {
+                let detail = format!(
+                    "The pool's price is {}.{:02}% away from the vault's reference price. The owner decides.",
+                    dev / 100, dev % 100
+                );
+                return self.hold(id.0, &q, lane, "PRICE_SHOCK", &detail);
+            }
+        }
+
+        // LEAK_BUDGET: value given up against the reference price, per key, per day.
+        let r = reference.unwrap_or(live_rate);
+        let give_bps = if r > min_rate { (r - min_rate) * 10_000 / r } else { 0 };
+        let give_cents = ((q.usd_cents.0 as u128 * give_bps + 9_999) / 10_000) as u64;
+        let budget = p.leak_budget_usd_cents.0;
+        if self.lanes[lane].leak_today_cents + give_cents > budget {
+            let detail = format!(
+                "This trade gives up ${} against the reference price. Today this key has given up ${} of its ${} budget.",
+                cents(give_cents), cents(self.lanes[lane].leak_today_cents), cents(budget)
+            );
+            return self.reject_in(strike_lane, id.0, "LEAK_BUDGET", &detail, Some(&q));
+        }
+        // The cap may have moved while the pool answered.
+        if self.lanes[lane].spent_today_cents + q.usd_cents.0 > self.lane_cap(lane) {
+            return self.reject_in(strike_lane, id.0, "DAILY_CAP", "Today's cap was reached while the pool answered.", Some(&q));
+        }
+
+        self.update_pool_ref(&q.token_in, &q.token_out, live_rate);
+        self.record_rate(&q.token_in, &q.token_out, q.amount_in, q.min_amount_out);
+        self.finish(id.0, &q, lane, give_cents)
     }
 
     // ------------------------------------------------------------------
@@ -377,12 +533,13 @@ impl GuardVault {
             self.log_event(id.0, Status::Cancelled, "KILL_SWITCH", "Kill switch is on.", None);
             return Outcome { id, status: Status::Cancelled, check: "KILL_SWITCH".into(), detail: "Kill switch is on.".into() };
         }
-        if self.spent_today_cents + p.usd_cents.0 > self.policy.daily_cap_usd_cents.0 {
+        let lane = p.lane as usize;
+        if self.lanes[lane].spent_today_cents + p.usd_cents.0 > self.lane_cap(lane) {
             self.log_event(id.0, Status::Cancelled, "DAILY_CAP", "Would exceed today's cap.", None);
             return Outcome { id, status: Status::Cancelled, check: "DAILY_CAP".into(), detail: "Would exceed today's cap.".into() };
         }
-        self.spent_today_cents += p.usd_cents.0;
-        self.dispatch(id.0, &p.kind, &p.token_in, &p.token_out, p.amount_in, p.min_amount_out, &p.venue, p.usd_cents.0);
+        self.lanes[lane].spent_today_cents += p.usd_cents.0;
+        self.dispatch(id.0, &p.kind, &p.token_in, &p.token_out, p.amount_in, p.min_amount_out, &p.venue, p.usd_cents.0, lane);
         self.stats.executed += 1;
         let detail = format!("Owner approved. ${} sent to {}.", cents(p.usd_cents.0), p.venue);
         self.log_event(id.0, Status::Approved, "OWNER_APPROVAL", &detail, None);
@@ -477,6 +634,26 @@ impl GuardVault {
         )
     }
 
+    /// Publish a second key pair anyone may use to attack the vault: a
+    /// function-call key for `execute` and the guard key that signs its quotes.
+    /// It trades under the same policy, with its own daily cap, leak budget and
+    /// strikes, so it can't use up the real agent's limits.
+    pub fn set_challenge(&mut self, public_key: PublicKey, guard_key: Base64VecU8, allowance: Option<U128>) -> Promise {
+        self.assert_owner();
+        require!(guard_key.0.len() == 32, "guard_key must be 32 bytes");
+        let allowance = allowance.map(|a| NearToken::from_yoctonear(a.0)).unwrap_or(DEFAULT_AGENT_ALLOWANCE);
+        require!(allowance <= NearToken::from_near(5), "Gas budget is capped at 5 NEAR");
+        let me = env::current_account_id();
+        let mut p = Promise::new(me.clone());
+        if let Some(old) = self.challenge_key.take() {
+            p = p.delete_key(old);
+        }
+        self.challenge_key = Some(public_key.clone());
+        self.challenge_guard_key = Some(guard_key.0);
+        self.log_event(0, Status::Executed, "CHALLENGE", "Owner published a challenge key pair.", None);
+        p.add_access_key_allowance(public_key, near_sdk::Allowance::limited(allowance).unwrap(), me, "execute".to_string())
+    }
+
     /// Owner asks to take funds out, to the owner account only. It waits for
     /// the timelock, so the guardian has time to veto a stolen key.
     pub fn request_withdraw(&mut self, token: AccountId, amount: U128) -> PendingWithdrawal {
@@ -562,7 +739,7 @@ impl GuardVault {
         let id = self.take_id();
         let detail = format!("Owner exited {} of {} into {}, within {}% of the last good rate.", amount.0, token_in, token_out, disc as f64 / 100.0);
         self.log_event(id, Status::Executed, "EXIT", &detail, None);
-        self.dispatch(id, &TradeKind::RefSwap { pool_id }, &token_in, &token_out, amount, min_amount_out, &venue, 0);
+        self.dispatch(id, &TradeKind::RefSwap { pool_id }, &token_in, &token_out, amount, min_amount_out, &venue, 0, LANE_AGENT);
     }
 
     /// An exit at any price. It waits for the guardian's approval, or the timelock.
@@ -637,7 +814,7 @@ impl GuardVault {
 
     #[private]
     #[allow(deprecated)]
-    pub fn on_dispatched(&mut self, id: U64, usd_cents: U64) {
+    pub fn on_dispatched(&mut self, id: U64, usd_cents: U64, lane: Option<u8>) {
         // ft_transfer_call reports how much the receiver kept. "0" means Ref
         // refused the swap (for example, below min_amount_out) and refunded it.
         let refunded = match env::promise_result(0) {
@@ -647,7 +824,8 @@ impl GuardVault {
             }
         };
         if refunded {
-            self.spent_today_cents = self.spent_today_cents.saturating_sub(usd_cents.0);
+            let l = lane.unwrap_or(0) as usize;
+            self.lanes[l].spent_today_cents = self.lanes[l].spent_today_cents.saturating_sub(usd_cents.0);
             self.stats.failed += 1;
             self.stats.executed = self.stats.executed.saturating_sub(1);
             self.log_event(
@@ -704,11 +882,37 @@ impl GuardVault {
         &self.stats
     }
     pub fn get_spent_today(&self) -> U64 {
-        if env::block_timestamp_ms() / DAY_MS != self.day {
+        let l = &self.lanes[LANE_AGENT];
+        if env::block_timestamp_ms() / DAY_MS != l.day {
             U64(0)
         } else {
-            U64(self.spent_today_cents)
+            U64(l.spent_today_cents)
         }
+    }
+    /// Spend, value given up, refusal strikes and current autonomy, per key.
+    pub fn get_lanes(&self) -> Vec<LaneView> {
+        let today = env::block_timestamp_ms() / DAY_MS;
+        ["agent", "challenge"]
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let l = &self.lanes[i];
+                let fresh = l.day == today;
+                LaneView {
+                    lane: name.to_string(),
+                    spent_today_cents: U64(if fresh { l.spent_today_cents } else { 0 }),
+                    leak_today_cents: U64(if fresh { l.leak_today_cents } else { 0 }),
+                    strikes: self.effective_strikes(i),
+                    autonomy_usd_cents: U64(self.autonomy(i)),
+                }
+            })
+            .collect()
+    }
+    pub fn get_pool_refs(&self) -> &Vec<PoolRef> {
+        &self.pool_refs
+    }
+    pub fn get_challenge(&self) -> (Option<&PublicKey>, Option<Base64VecU8>) {
+        (self.challenge_key.as_ref(), self.challenge_guard_key.clone().map(Base64VecU8))
     }
     /// Most recent first.
     pub fn get_events(&self) -> Vec<Event> {
@@ -722,6 +926,115 @@ impl GuardVault {
     // Internals
     // ------------------------------------------------------------------
 
+    /// Hold for the owner, or execute, depending on this key's autonomy.
+    fn finish(&mut self, id: u64, q: &Quote, lane: usize, give_cents: u64) -> Outcome {
+        let limit = self.autonomy(lane);
+        if q.usd_cents.0 > limit {
+            let strikes = self.effective_strikes(lane);
+            let detail = if strikes > 0 {
+                format!(
+                    "${} is above this key's ${} autonomy limit, cut from ${} by {} recent refusal{}. Waiting for the owner.",
+                    cents(q.usd_cents.0), cents(limit), cents(self.policy.approval_above_usd_cents.0), strikes,
+                    if strikes == 1 { "" } else { "s" }
+                )
+            } else {
+                format!("${} is above the ${} autonomy limit. Waiting for the owner.", cents(q.usd_cents.0), cents(limit))
+            };
+            return self.hold(id, q, lane, "OWNER_APPROVAL", &detail);
+        }
+        self.lanes[lane].spent_today_cents += q.usd_cents.0;
+        self.lanes[lane].leak_today_cents += give_cents;
+        self.dispatch(id, &q.kind, &q.token_in, &q.token_out, q.amount_in, q.min_amount_out, &q.venue, q.usd_cents.0, lane);
+        let detail = format!("Passed every check. ${} sent to {}.", cents(q.usd_cents.0), q.venue);
+        self.log_event(id, Status::Executed, "OK", &detail, Some(q));
+        self.stats.executed += 1;
+        Outcome { id: U64(id), status: Status::Executed, check: "OK".into(), detail }
+    }
+
+    fn hold(&mut self, id: u64, q: &Quote, lane: usize, check: &str, detail: &str) -> Outcome {
+        let p = PendingTrade {
+            id: U64(id),
+            kind: q.kind.clone(),
+            token_in: q.token_in.clone(),
+            token_out: q.token_out.clone(),
+            amount_in: q.amount_in,
+            min_amount_out: q.min_amount_out,
+            venue: q.venue.clone(),
+            usd_cents: q.usd_cents,
+            created_ms: U64(env::block_timestamp_ms()),
+            lane: lane as u8,
+        };
+        self.pending.insert(id, p);
+        self.stats.pending += 1;
+        self.log_event(id, Status::PendingApproval, check, detail, Some(q));
+        Outcome { id: U64(id), status: Status::PendingApproval, check: check.into(), detail: detail.into() }
+    }
+
+    fn effective_strikes(&self, lane: usize) -> u32 {
+        let l = &self.lanes[lane];
+        let worn = (env::block_timestamp_ms().saturating_sub(l.strike_at_ms) / STRIKE_DECAY_MS) as u32;
+        l.strikes.saturating_sub(worn)
+    }
+
+    /// The most this key may trade without the owner: halved per recent refusal.
+    fn autonomy(&self, lane: usize) -> u64 {
+        self.policy.approval_above_usd_cents.0 >> self.effective_strikes(lane).min(MAX_STRIKES)
+    }
+
+    fn lane_cap(&self, lane: usize) -> u64 {
+        if lane == LANE_CHALLENGE {
+            self.policy.challenge_daily_cap_usd_cents.0
+        } else {
+            self.policy.daily_cap_usd_cents.0
+        }
+    }
+
+    fn pool_ref(&self, token_in: &AccountId, token_out: &AccountId) -> Option<u128> {
+        self.pool_refs.iter().find(|r| &r.token_in == token_in && &r.token_out == token_out).map(|r| r.out_per_in_e6.0)
+    }
+
+    /// Moves a quarter of the way to the live price on each accepted swap.
+    fn update_pool_ref(&mut self, token_in: &AccountId, token_out: &AccountId, live: u128) {
+        let now = U64(env::block_timestamp_ms());
+        match self.pool_refs.iter_mut().find(|r| &r.token_in == token_in && &r.token_out == token_out) {
+            Some(r) => {
+                r.out_per_in_e6 = U128((r.out_per_in_e6.0 * 3 + live) / 4);
+                r.at_ms = now;
+            }
+            None => self.pool_refs.push(PoolRef { token_in: token_in.clone(), token_out: token_out.clone(), out_per_in_e6: U128(live), at_ms: now }),
+        }
+    }
+
+    /// (lane that takes refusal strikes, lane that pays, guard key to verify with).
+    fn caller_lane(&self) -> (Option<usize>, usize, Vec<u8>) {
+        let pred = env::predecessor_account_id();
+        if pred == self.owner {
+            return (None, LANE_AGENT, self.guard_key.clone());
+        }
+        require!(
+            pred == env::current_account_id(),
+            "Only the vault's agent key or the owner can execute trades"
+        );
+        let pk = env::signer_account_pk();
+        if self.agent_key.as_ref() == Some(&pk) {
+            return (Some(LANE_AGENT), LANE_AGENT, self.guard_key.clone());
+        }
+        if self.challenge_key.as_ref() == Some(&pk) {
+            let g = self.challenge_guard_key.clone().unwrap_or_else(|| env::panic_str("No challenge guard key"));
+            return (Some(LANE_CHALLENGE), LANE_CHALLENGE, g);
+        }
+        env::panic_str("Signer is not the registered agent key")
+    }
+
+    fn reject_in(&mut self, strike_lane: Option<usize>, id: u64, check: &str, detail: &str, q: Option<&Quote>) -> Outcome {
+        if let Some(l) = strike_lane {
+            let s = (self.effective_strikes(l) + 1).min(MAX_STRIKES);
+            self.lanes[l].strikes = s;
+            self.lanes[l].strike_at_ms = env::block_timestamp_ms();
+        }
+        self.reject(id, check, detail, q)
+    }
+
     fn assert_owner(&self) {
         require!(env::predecessor_account_id() == self.owner, "Only the owner can do this");
     }
@@ -731,25 +1044,10 @@ impl GuardVault {
         require!(p == self.owner || p == self.guardian, "Only the owner or the guardian can do this");
     }
 
-    fn assert_agent_or_owner(&self) {
-        let pred = env::predecessor_account_id();
-        if pred == self.owner {
-            return;
-        }
-        require!(
-            pred == env::current_account_id(),
-            "Only the vault's agent key or the owner can execute trades"
-        );
-        let pk = env::signer_account_pk();
-        require!(
-            self.agent_key.as_ref() == Some(&pk),
-            "Signer is not the registered agent key"
-        );
-    }
-
     fn assert_policy(p: &Policy) {
         require!(p.max_trade_usd_cents.0 <= p.daily_cap_usd_cents.0, "Per-trade cap can't exceed the daily cap");
         require!(p.max_cost_bps <= 1_000, "max_cost_bps above 10% is not allowed");
+        require!(p.max_slippage_bps <= 1_000, "max_slippage_bps above 10% is not allowed");
         for (t, _) in &p.max_amount_per_trade {
             require!(p.allowed_tokens.contains(t), "Every capped token must be allowlisted");
         }
@@ -768,7 +1066,7 @@ impl GuardVault {
         let idx = self.pending_exits.iter().position(|e| e.id == id).unwrap_or_else(|| env::panic_str("No queued exit with that id"));
         let e = self.pending_exits.remove(idx);
         self.log_event(id.0, Status::Executed, "EXIT_DEEP", detail, None);
-        self.dispatch(id.0, &TradeKind::RefSwap { pool_id: e.pool_id }, &e.token_in, &e.token_out, e.amount, e.min_amount_out, &e.venue, 0);
+        self.dispatch(id.0, &TradeKind::RefSwap { pool_id: e.pool_id }, &e.token_in, &e.token_out, e.amount, e.min_amount_out, &e.venue, 0, LANE_AGENT);
     }
 
     fn record_rate(&mut self, token_in: &AccountId, token_out: &AccountId, amount_in: U128, min_out: U128) {
@@ -810,6 +1108,10 @@ impl GuardVault {
             && new.max_cost_bps <= old.max_cost_bps
             && new.exit_tokens.iter().all(|t| old.exit_tokens.contains(t))
             && new.exit_max_discount_bps <= old.exit_max_discount_bps
+            && new.max_slippage_bps <= old.max_slippage_bps
+            && new.shock_bps <= old.shock_bps
+            && new.leak_budget_usd_cents.0 <= old.leak_budget_usd_cents.0
+            && new.challenge_daily_cap_usd_cents.0 <= old.challenge_daily_cap_usd_cents.0
             && old.price_floors.iter().all(|of| {
                 new.price_floors.iter().any(|nf| {
                     nf.token_in == of.token_in
@@ -819,7 +1121,7 @@ impl GuardVault {
             })
     }
 
-    fn check_limits(&self, q: &Quote) -> Result<(), (&'static str, String)> {
+    fn check_limits(&self, q: &Quote, lane: usize) -> Result<(), (&'static str, String)> {
         let p = &self.policy;
         if !p.allowed_tokens.contains(&q.token_in) || !p.allowed_tokens.contains(&q.token_out) {
             let bad = if p.allowed_tokens.contains(&q.token_in) { &q.token_out } else { &q.token_in };
@@ -896,14 +1198,16 @@ impl GuardVault {
                 format!("Fees and price impact are {} bps; the limit is {} bps.", q.cost_bps, p.max_cost_bps),
             ));
         }
-        if self.spent_today_cents + q.usd_cents.0 > p.daily_cap_usd_cents.0 {
+        let spent = self.lanes[lane].spent_today_cents;
+        let cap = self.lane_cap(lane);
+        if spent + q.usd_cents.0 > cap {
             return Err((
                 "DAILY_CAP",
                 format!(
                     "${} spent today plus ${} would pass the ${} daily cap.",
-                    cents(self.spent_today_cents),
+                    cents(spent),
                     cents(q.usd_cents.0),
-                    cents(p.daily_cap_usd_cents.0)
+                    cents(cap)
                 ),
             ));
         }
@@ -921,6 +1225,7 @@ impl GuardVault {
         min_out: U128,
         venue: &AccountId,
         usd: u64,
+        lane: usize,
     ) {
         let call = match kind {
             TradeKind::Wrap => Promise::new(venue.clone()).function_call(
@@ -961,7 +1266,7 @@ impl GuardVault {
         let _ = call.then(
             Promise::new(env::current_account_id()).function_call(
                 "on_dispatched".to_string(),
-                near_sdk::serde_json::json!({ "id": U64(id), "usd_cents": U64(usd) }).to_string().into_bytes(),
+                near_sdk::serde_json::json!({ "id": U64(id), "usd_cents": U64(usd), "lane": lane as u8 }).to_string().into_bytes(),
                 NearToken::from_yoctonear(0),
                 GAS_FOR_CALLBACK,
             ),
@@ -993,9 +1298,12 @@ impl GuardVault {
 
     fn roll_day(&mut self) {
         let today = env::block_timestamp_ms() / DAY_MS;
-        if today != self.day {
-            self.day = today;
-            self.spent_today_cents = 0;
+        for l in self.lanes.iter_mut() {
+            if l.day != today {
+                l.day = today;
+                l.spent_today_cents = 0;
+                l.leak_today_cents = 0;
+            }
         }
     }
 
