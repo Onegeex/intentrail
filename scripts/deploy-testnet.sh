@@ -63,8 +63,9 @@ POLICY=$(cat <<JSON
   "exit_max_discount_bps": 1000,
   "max_slippage_bps": 100,
   "shock_bps": 300,
-  "leak_budget_usd_cents": "50",
-  "challenge_daily_cap_usd_cents": "2000"
+  "leak_budget_usd_cents": "20",
+  "challenge_daily_cap_usd_cents": "2000",
+  "usd_tokens": [["$USDT", 24]]
 }
 JSON
 )

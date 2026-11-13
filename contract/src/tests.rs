@@ -54,6 +54,7 @@ fn policy() -> Policy {
         shock_bps: 300,
         leak_budget_usd_cents: U64(50),
         challenge_daily_cap_usd_cents: U64(600),
+        usd_tokens: vec![],
     }
 }
 
@@ -836,4 +837,52 @@ fn loosening_the_new_defenses_waits_for_the_timelock() {
     let mut p = policy();
     p.leak_budget_usd_cents = U64(10_000);
     assert_eq!(v.set_policy(p), "QUEUED");
+}
+
+#[test]
+fn a_lying_guard_cannot_shrink_a_trades_value() {
+    // The guard says this swap is worth 1 cent. The pool pays 1.30 USDT for it.
+    let mut v = setup();
+    as_account(OWNER);
+    let mut p = policy();
+    p.usd_tokens = vec![(acc(USDT), 24)];
+    v.set_policy(p);
+    as_agent();
+    let min = TENTH * 13; // 1.30 USDT minimum for 0.1 wNEAR, above the floor
+    let q = swap_q(min, 1, 1);
+    let o = run_with(&mut v, q.clone(), sign(&q), Some(min / 1000 * 1005));
+    assert_eq!(o.status, Status::Executed, "{}", o.detail);
+    assert_eq!(v.get_spent_today().0, 130, "spend is the pool's value, not the guard's");
+}
+
+#[test]
+fn pool_value_over_the_cap_is_refused() {
+    let mut v = setup();
+    as_account(OWNER);
+    let mut p = policy();
+    p.usd_tokens = vec![(acc(USDT), 24)];
+    v.set_policy(p);
+    as_agent();
+    let min = TENTH * 60; // $6 by the pool, cap is $5; the guard claims $2
+    let q = swap_q(min, 1, 200);
+    let o = run_with(&mut v, q.clone(), sign(&q), Some(min / 1000 * 1005));
+    assert_eq!(o.check, "SIZE", "{}", o.detail);
+}
+
+#[test]
+fn rising_price_cannot_hide_a_giveaway() {
+    let mut v = setup();
+    as_account(OWNER);
+    let mut p = policy();
+    p.leak_budget_usd_cents = U64(3);
+    v.set_policy(p);
+    as_agent();
+    let q1 = swap_q(TENTH * 124 / 100, 1, 300);
+    assert_eq!(run(&mut v, q1.clone(), sign(&q1)).status, Status::Executed);
+    // Price up 2.5% (under the shock limit). A minimum 0.99 of the new live price
+    // is above the old reference, but still gives away ~1% of today's value.
+    let live = TENTH * 124 / 100 * 1025 / 1000;
+    let q2 = swap_q(live / 100 * 99, 2, 300);
+    let o = run_with(&mut v, q2.clone(), sign(&q2), Some(live));
+    assert_eq!(o.check, "LEAK_BUDGET", "{}", o.detail);
 }

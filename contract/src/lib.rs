@@ -141,6 +141,11 @@ pub struct Policy {
     /// Daily cap for the published challenge keys.
     #[serde(default = "default_challenge_cap")]
     pub challenge_daily_cap_usd_cents: U64,
+    /// Tokens worth $1 each, with their decimals. On swaps that touch one, the
+    /// contract values the trade itself from the pool and uses the higher of
+    /// that and the guard's figure, so a lying guard can't stretch the caps.
+    #[serde(default)]
+    pub usd_tokens: Vec<(AccountId, u8)>,
 }
 
 fn default_exit_discount() -> u32 {
@@ -471,6 +476,19 @@ impl GuardVault {
             return self.reject_in(None, id.0, "POOL_QUOTE", "Couldn't read a live quote from the pool, so the swap was not sent.", Some(&q));
         };
         let p = &self.policy;
+        // Value the trade from the venue when one side is a dollar token.
+        let usd_of = |t: &AccountId, raw: u128| -> Option<u64> {
+            p.usd_tokens.iter().find(|(u, _)| u == t).map(|(_, d)| (raw.saturating_mul(100) / 10u128.pow(*d as u32)) as u64)
+        };
+        let onchain_usd = usd_of(&q.token_out, live_out).or_else(|| usd_of(&q.token_in, q.amount_in.0));
+        let usd = onchain_usd.unwrap_or(0).max(q.usd_cents.0);
+        if usd > p.max_trade_usd_cents.0 {
+            let detail = format!(
+                "The pool values this trade at ${}, over the ${} per-trade cap.",
+                cents(usd), cents(p.max_trade_usd_cents.0)
+            );
+            return self.reject_in(strike_lane, id.0, "SIZE", &detail, Some(&q));
+        }
 
         // POOL_QUOTE: the minimum output can't give away more than max_slippage_bps of the live quote.
         if q.min_amount_out.0.saturating_mul(10_000) < live_out.saturating_mul(10_000 - p.max_slippage_bps.min(10_000) as u128) {
@@ -498,10 +516,12 @@ impl GuardVault {
             }
         }
 
-        // LEAK_BUDGET: value given up against the reference price, per key, per day.
-        let r = reference.unwrap_or(live_rate);
+        // LEAK_BUDGET: value given up per key, per day, measured against the
+        // higher of the reference and the live price, so a rising market
+        // can't hide it.
+        let r = reference.map(|x| x.max(live_rate)).unwrap_or(live_rate);
         let give_bps = if r > min_rate { (r - min_rate) * 10_000 / r } else { 0 };
-        let give_cents = ((q.usd_cents.0 as u128 * give_bps + 9_999) / 10_000) as u64;
+        let give_cents = ((usd as u128 * give_bps + 9_999) / 10_000) as u64;
         let budget = p.leak_budget_usd_cents.0;
         if self.lanes[lane].leak_today_cents + give_cents > budget {
             let detail = format!(
@@ -511,12 +531,14 @@ impl GuardVault {
             return self.reject_in(strike_lane, id.0, "LEAK_BUDGET", &detail, Some(&q));
         }
         // The cap may have moved while the pool answered.
-        if self.lanes[lane].spent_today_cents + q.usd_cents.0 > self.lane_cap(lane) {
-            return self.reject_in(strike_lane, id.0, "DAILY_CAP", "Today's cap was reached while the pool answered.", Some(&q));
+        if self.lanes[lane].spent_today_cents + usd > self.lane_cap(lane) {
+            return self.reject_in(strike_lane, id.0, "DAILY_CAP", "This trade, valued by the pool, would pass today's cap.", Some(&q));
         }
 
         self.update_pool_ref(&q.token_in, &q.token_out, live_rate);
         self.record_rate(&q.token_in, &q.token_out, q.amount_in, q.min_amount_out);
+        let mut q = q;
+        q.usd_cents = U64(usd);
         self.finish(id.0, &q, lane, give_cents)
     }
 
@@ -1112,6 +1134,7 @@ impl GuardVault {
             && new.shock_bps <= old.shock_bps
             && new.leak_budget_usd_cents.0 <= old.leak_budget_usd_cents.0
             && new.challenge_daily_cap_usd_cents.0 <= old.challenge_daily_cap_usd_cents.0
+            && old.usd_tokens.iter().all(|t| new.usd_tokens.contains(t))
             && old.price_floors.iter().all(|of| {
                 new.price_floors.iter().any(|nf| {
                     nf.token_in == of.token_in
