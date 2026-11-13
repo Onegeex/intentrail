@@ -1,0 +1,61 @@
+{
+ "vault": "intentrail-vault7-39ae84.testnet",
+ "ranAt": "2026-11-13T18:59:00Z",
+ "note": "Run on NEAR testnet against Ref Finance pool 1084. For the slow-bleed run the owner tightened that key's leak budget to $0.06 (normally $0.20), so it trips in a few trades instead of a few dozen.",
+ "steps": [
+  {
+   "id": "reference",
+   "title": "An honest swap sets the reference price",
+   "how": "0.3 wNEAR to USDT with a minimum 0.5% under the pool. The contract reads Ref's live quote before sending it and starts its own reference price from it.",
+   "check": "OK",
+   "result": "Executed. The contract checked the pool itself before sending the swap.",
+   "tx": "CNCprhREQtx95s85Ksh4zZmGQdXLZZv1RuMihEUyA9GD",
+   "blocked": false
+  },
+  {
+   "id": "loose",
+   "title": "A hacked guard signs a loose minimum",
+   "how": "A validly signed swap whose minimum output is 3% under what the pool pays right now. It is still above the owner's fixed price floor, so v5 would have let it through.",
+   "check": "POOL_QUOTE",
+   "result": "The signed minimum output gives away 3.00% of what the pool pays right now. The limit is 1.00%.",
+   "tx": "3e86St9fvYrX9F1qd2aFqAo2xbqQvB4qdgKx9a7tydRD",
+   "blocked": true
+  },
+  {
+   "id": "bleed-1",
+   "title": "Slow bleed, trade 1: a 'fair-looking' give-away",
+   "how": "A $3.90 swap whose minimum is 0.9% under the pool. Under the 1% limit, so it looks like ordinary slippage.",
+   "check": "OK",
+   "result": "Executed. $0.04 of value given up, counted against this key's daily budget.",
+   "tx": "8Tw6FubNy2HfVRrke2Uicez61MhWhzxeERcAFrxx3sJA",
+   "blocked": false
+  },
+  {
+   "id": "bleed-2",
+   "title": "Slow bleed, trade 2: the budget runs out",
+   "how": "The same give-away again. Each one alone is 'fair'; together they leak value.",
+   "check": "LEAK_BUDGET",
+   "result": "This trade gives up $0.04 against the reference price. Today this key has given up $0.05 of its $0.06 budget.",
+   "tx": "C8wyUE6GwbNzhirXXyLkbF85weRPaLGR8f6aiVZYdk1L",
+   "blocked": true
+  },
+  {
+   "id": "autonomy",
+   "title": "Two refusals later, an ordinary trade waits",
+   "how": "A normal $1.50 swap from the same key, right after its two refused trades.",
+   "check": "OWNER_APPROVAL",
+   "result": "$1.50 is above this key's $1 autonomy limit, cut from $4 by 2 recent refusals. Waiting for the owner.",
+   "tx": "6N1XEbzfX5Nf3MnBL6sEWFJBTSoeiwUiK7E4QoKv2fEY",
+   "blocked": true
+  },
+  {
+   "id": "lying-usd",
+   "title": "A hacked guard understates the trade's value",
+   "how": "The guard claims a 0.3 wNEAR swap is worth $0.05, to stretch the daily cap and the leak budget.",
+   "check": "OK",
+   "result": "Executed at the pool's value: the contract counted $0.37, not the guard's $0.05.",
+   "tx": "GiWWEpS1CT4bTN8gNkXDxsoSHX5HenWMQT8WU5Vn1wLA",
+   "blocked": false
+  }
+ ]
+}

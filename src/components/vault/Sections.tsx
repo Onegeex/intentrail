@@ -24,7 +24,7 @@ const STEPS = [
   {
     who: "GuardVault contract",
     title: "Checks its own limits",
-    body: "Caller, signature, freshness, replay, token and venue allowlists, per-trade cap in USD and in raw tokens, daily cap, fee ceiling, the owner's price floor, kill switch. Above $4 it waits for the owner.",
+    body: "Caller, signature, freshness, replay, allowlists, caps, fee ceiling, kill switch. Then it reads the Ref pool itself: a minimum more than 1% under the live price, a price that jumped 3% from its own reference, or a key that has leaked its daily budget is refused. Above the key's autonomy limit it waits for the owner.",
   },
   {
     who: "Venue",
@@ -33,7 +33,15 @@ const STEPS = [
   },
 ];
 
-export type WorstCase = { perTradeUsd: number; perDayUsd: number; worstGapPct: number; autonomousMaxUsd: number; dailyCapUsd: number } | null;
+export type WorstCase = {
+  perTradeUsd: number;
+  perDayUsd: number;
+  worstGapPct: number;
+  autonomousMaxUsd: number;
+  dailyCapUsd: number;
+  floorGapPct?: number;
+  floorsOnlyPerDayUsd?: number;
+} | null;
 
 export function HowItWorks({ worstCase }: { worstCase: WorstCase }) {
   return (
@@ -61,18 +69,24 @@ export function HowItWorks({ worstCase }: { worstCase: WorstCase }) {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-caution">Worst case if our guard server is hacked</p>
             <p className="font-display text-5xl font-black leading-none tracking-wide text-ivory">
               ${worstCase.perDayUsd.toFixed(2)}
-              <span className="text-2xl text-ivory-dim"> a day</span>
+              <span className="text-2xl text-ivory-dim"> a day, per key</span>
             </p>
             <p className="mt-1 font-mono text-sm text-ivory-dim">
-              {worstCase.worstGapPct}% × ${worstCase.dailyCapUsd} daily cap · ${worstCase.perTradeUsd.toFixed(2)} a trade
+              leak budget · {worstCase.worstGapPct}% at most per trade · ${worstCase.perTradeUsd.toFixed(2)} a trade
             </p>
           </div>
           <p className="text-sm leading-relaxed text-ivory/90">
-            A hacked guard can sign trades right at the owner&apos;s price floor, {worstCase.worstGapPct}% under today&apos;s
-            pool price, up to ${worstCase.autonomousMaxUsd} a trade before the owner must approve. Everything else on this
-            page still holds, and the owner or guardian can pause at once. Floors are fixed numbers today: if the price
-            rises the gap widens, and if it falls they block sales (the crash exit covers that). They need re-tuning, or an
-            oracle-relative floor, which is designed but not built.
+            A hacked guard can still sign trades the contract accepts, but the contract prices each one on the pool
+            itself: at most {worstCase.worstGapPct}% under the live price, and the value given up is added to a daily
+            leak budget measured against the higher of the live price and the vault&apos;s own reference. It can&apos;t
+            understate a trade&apos;s size either: the contract values it on the pool.
+            {worstCase.floorsOnlyPerDayUsd !== undefined && (
+              <>
+                {" "}With fixed floors alone, the same hack would cost ${worstCase.floorsOnlyPerDayUsd.toFixed(2)} a day
+                ({worstCase.floorGapPct}% × ${worstCase.dailyCapUsd}).
+              </>
+            )}{" "}
+            The owner or guardian can pause at once.
           </p>
         </div>
       )}
@@ -114,9 +128,9 @@ function TRUST(w: WorstCase): { who: string; can: string; cant: string; root?: b
     {
       who: "The guard server and its key",
       can: w
-        ? `Sign bad-but-allowed trades until someone notices: about $${w.perTradeUsd.toFixed(2)} a trade and $${w.perDayUsd.toFixed(2)} a day at today's pool price.`
-        : "Sign bad-but-allowed trades until someone notices, down to the owner's price floor.",
-      cant: "Sell below the floor, exceed any cap, add a venue, or skip owner approval. Once the key is rotated, its quotes are worthless.",
+        ? `Sign bad-but-allowed trades until someone notices: at most $${w.perTradeUsd.toFixed(2)} a trade and $${w.perDayUsd.toFixed(2)} a day per key, then the leak budget refuses.`
+        : "Sign bad-but-allowed trades until the leak budget runs out.",
+      cant: "Sign a minimum more than 1% under the live pool, understate a trade's value, exceed any cap, add a venue, or skip owner approval. Each refusal halves the agent's autonomy. Once the key is rotated, its quotes are worthless.",
     },
     {
       who: "Anyone else",
@@ -247,6 +261,18 @@ const TESTS = [
   "Exit only into an exit token",
   "Agent can't use the crash exit",
   "Agent gas budget is capped",
+  "A loose minimum under the live pool is refused",
+  "No pool read, no swap",
+  "A sudden price jump waits for the owner",
+  "Leak budget stops a slow bleed of fair-looking trades",
+  "Refusals cut autonomy, and it recovers",
+  "Challenge keys trade in their own lane",
+  "Challenge keys can't use the real guard",
+  "Challenge lane has its own daily cap",
+  "Loosening the new defenses waits for the timelock",
+  "A lying guard can't shrink a trade's value",
+  "Pool value over the cap is refused",
+  "A rising price can't hide a give-away",
 ];
 
 export const TEST_COUNT = TESTS.length;
@@ -306,7 +332,9 @@ const STATUS: { label: string; tone: string; dot: string; items: string[] }[] = 
     tone: "border-proceed/40",
     dot: "bg-proceed",
     items: [
-      "GuardVault contract, 45 tests, full-access key deleted",
+      "GuardVault contract, 57 tests, full-access key deleted",
+      "Live pool check, price-shock hold, daily leak budget, adaptive autonomy",
+      "Public challenge: agent and guard keys published, own lane and caps",
       "Agent key limited by NEAR to execute() with a gas budget",
       "Guard signatures, price floors, caps, replay and expiry checks",
       "Guardian veto and pause; timelocked withdrawals and loosening",
@@ -323,7 +351,7 @@ const STATUS: { label: string; tone: string; dot: string; items: string[] }[] = 
     dot: "bg-caution",
     items: [
       "Mainnet NEAR Intents through chain signatures, with no hot key. The vault hasn't traded through intents.near yet.",
-      "Oracle-relative price floors. Today's floors are fixed numbers that need re-tuning by hand.",
+      "An external oracle for the price-shock reference. Today it is the vault's own moving average of the pool.",
     ],
   },
   {

@@ -1,6 +1,7 @@
 import { HomeClient } from "@/components/HomeClient";
 import type { RecordedLlm } from "@/components/vault/AgentChat";
 import type { AttackRun } from "@/components/vault/AttackDemo";
+import { Challenge } from "@/components/vault/Challenge";
 import { Evidence, HowItWorks, KeyDrills, StatusBoard, TEST_COUNT, WhyNear, type WorstCase } from "@/components/vault/Sections";
 import recorded from "@/data/recorded-attack.json";
 import recordedLlm from "@/data/recorded-llm.json";
@@ -32,6 +33,14 @@ export default async function HomePage() {
       drills={<KeyDrills />}
       status={<StatusBoard />}
       whyNear={<WhyNear />}
+      challenge={
+        <Challenge
+          lanes={vault?.lanes ?? []}
+          leakBudgetCents={Number(vault?.policy.leak_budget_usd_cents ?? 20)}
+          challengeCapCents={Number(vault?.policy.challenge_daily_cap_usd_cents ?? 2000)}
+          autonomyCents={Number(vault?.policy.approval_above_usd_cents ?? 400)}
+        />
+      }
       llmConfigured={llmConfigured()}
     />
   );

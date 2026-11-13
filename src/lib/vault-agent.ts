@@ -204,6 +204,10 @@ export async function worstCaseIfGuardHacked(): Promise<{
   worstGapPct: number;
   autonomousMaxUsd: number;
   dailyCapUsd: number;
+  /** Gap between today's pool price and the fixed floor: what floors alone would allow. */
+  floorGapPct: number;
+  /** What a hacked guard could lose a day with floors alone (no pool check, no leak budget). */
+  floorsOnlyPerDayUsd: number;
 }> {
   const snap = await getVaultSnapshot();
   const p = snap.policy;
@@ -217,14 +221,20 @@ export async function worstCaseIfGuardHacked(): Promise<{
   }
   const autonomousMaxUsd = Math.min(Number(p.approval_above_usd_cents), Number(p.max_trade_usd_cents)) / 100;
   const dailyCapUsd = Number(p.daily_cap_usd_cents) / 100;
-  // Round the percentage first, so the dollar figures follow from the number on the page.
-  const pct = Number((worstGap * 100).toFixed(1));
+  // Round the percentages first, so the dollar figures follow from the numbers on the page.
+  const floorPct = Number((worstGap * 100).toFixed(1));
+  const slipPct = (p.max_slippage_bps ?? 100) / 100;
+  const leakUsd = Number(p.leak_budget_usd_cents ?? 20) / 100;
   return {
-    perTradeUsd: Number(((autonomousMaxUsd * pct) / 100).toFixed(2)),
-    perDayUsd: Number(((dailyCapUsd * pct) / 100).toFixed(2)),
-    worstGapPct: pct,
+    // Each swap: at most max_slippage under the pool's own live quote.
+    perTradeUsd: Number(((autonomousMaxUsd * slipPct) / 100).toFixed(2)),
+    // Each day, per key: the leak budget, measured against max(reference, live).
+    perDayUsd: Math.min(leakUsd, Number(((dailyCapUsd * slipPct) / 100).toFixed(2))),
+    worstGapPct: slipPct,
     autonomousMaxUsd,
     dailyCapUsd,
+    floorGapPct: floorPct,
+    floorsOnlyPerDayUsd: Number(((dailyCapUsd * floorPct) / 100).toFixed(2)),
   };
 }
 
@@ -281,9 +291,9 @@ export async function runAttackSuite(): Promise<{ priceUsd: number; attempts: At
   };
 
   // Layer 1: NEAR's access keys.
-  add({ id: "withdraw", layer: "near", title: "Call withdraw() to pull funds out", how: "The agent key calls the vault's owner-only withdraw method.", result: await agentAttempt("withdraw", ATTACKER) });
-  add({ id: "token", layer: "near", title: "Transfer wNEAR straight from the token contract", how: "The agent key signs ft_transfer on wrap.testnet to the attacker.", result: await agentAttempt("direct_ft_transfer", ATTACKER) });
-  add({ id: "native", layer: "near", title: "Send NEAR to the attacker", how: "The agent key signs a plain NEAR transfer out of the vault.", result: await agentAttempt("native_transfer", ATTACKER) });
+  add({ id: "withdraw", layer: "near", title: "Call withdraw() to pull funds out", how: "The published challenge key, a limited key on the vault like the agent's, calls the owner-only withdraw method.", result: await agentAttempt("withdraw", ATTACKER, "challenge") });
+  add({ id: "token", layer: "near", title: "Transfer wNEAR straight from the token contract", how: "The published key signs ft_transfer on wrap.testnet to the attacker.", result: await agentAttempt("direct_ft_transfer", ATTACKER, "challenge") });
+  add({ id: "native", layer: "near", title: "Send NEAR to the attacker", how: "The published key signs a plain NEAR transfer out of the vault.", result: await agentAttempt("native_transfer", ATTACKER, "challenge") });
 
   // Layer 2: the contract.
   const small = buildWrapQuote(Number((1.2 / nearUsd).toFixed(4)), nearUsd);
@@ -297,30 +307,35 @@ export async function runAttackSuite(): Promise<{ priceUsd: number; attempts: At
   });
 
   const honest = buildWrapQuote(Number((1.5 / nearUsd).toFixed(4)), nearUsd);
-  const hs = signQuote(honest);
+  const hs = signQuote(honest, "challenge");
   const tampered = hs.quoteJson.replace(`"amount_in":"${honest.amount_in}"`, `"amount_in":"${toRaw(2.5).toString()}"`);
-  add({ id: "tamper", layer: "contract", title: "Edit a signed quote to move more", how: "The guard signed a $1.50 trade; the agent raises the amount before sending it.", result: await agentExecute(tampered, hs.signatureB64, "agent", GAS.refusal) });
+  add({ id: "tamper", layer: "contract", title: "Edit a signed quote to move more", how: "The guard signed a $1.50 trade; the agent raises the amount before sending it.", result: await agentExecute(tampered, hs.signatureB64, "challenge", GAS.refusal) });
 
   const big = buildWrapQuote(2.9, nearUsd, { usd_cents: "5000" });
-  const bigSigned = signQuote(big);
-  add({ id: "leaked-size", layer: "contract", title: "Steal the guard key and sign a $50 trade", how: "A leak nobody has noticed yet: a validly signed quote, far above the $10 per-trade cap.", result: await agentExecute(bigSigned.quoteJson, bigSigned.signatureB64, "agent", GAS.refusal) });
+  const bigSigned = signQuote(big, "challenge");
+  add({ id: "leaked-size", layer: "contract", title: "Use the published guard key to sign a $50 trade", how: "Both keys are public: a validly signed quote, far above the $10 per-trade cap.", result: await agentExecute(bigSigned.quoteJson, bigSigned.signatureB64, "challenge", GAS.refusal) });
 
   const rq = await quoteRef("to_usdt", toRaw(0.3));
   const dump = buildSwapQuote(rq, nearUsd, { min_amount_out: (rq.expectedOut / BigInt(2)).toString() });
-  const dumpSigned = signQuote(dump);
-  add({ id: "leaked-price", layer: "contract", title: "Steal the guard key and sell at half price", how: "A validly signed swap whose minimum output is half the market rate.", result: await agentExecute(dumpSigned.quoteJson, dumpSigned.signatureB64, "agent", GAS.refusal) });
+  const dumpSigned = signQuote(dump, "challenge");
+  add({ id: "leaked-price", layer: "contract", title: "Sign a sale at half price", how: "A validly signed swap whose minimum output is half the market rate.", result: await agentExecute(dumpSigned.quoteJson, dumpSigned.signatureB64, "challenge", GAS.refusal) });
 
   if (process.env.GUARD_LEAKED_KEY) {
     const old = buildWrapQuote(Number((1.2 / nearUsd).toFixed(4)), nearUsd);
     const oldSigned = signQuote(old, "leaked");
-    add({ id: "rotated", layer: "contract", title: "Use the guard key the owner already rotated out", how: "After the key-leak drill, quotes signed by the old key are worthless.", result: await agentExecute(oldSigned.quoteJson, oldSigned.signatureB64, "agent", GAS.refusal) });
+    add({ id: "rotated", layer: "contract", title: "Use the guard key the owner already rotated out", how: "The real guard key the owner rotated out in the key-leak drill. Its quotes are worthless now.", result: await agentExecute(oldSigned.quoteJson, oldSigned.signatureB64, "challenge", GAS.refusal) });
   }
 
-  add({ id: "replay", layer: "contract", title: "Replay the same signed quote", how: "Send that exact quote and signature a second time.", result: await agentExecute(bigSigned.quoteJson, bigSigned.signatureB64, "agent", GAS.refusal) });
+  add({ id: "replay", layer: "contract", title: "Replay the same signed quote", how: "Send that exact quote and signature a second time.", result: await agentExecute(bigSigned.quoteJson, bigSigned.signatureB64, "challenge", GAS.refusal) });
 
   const evil = buildSwapQuote(rq, nearUsd, { venue: ATTACKER });
-  const evilSigned = signQuote(evil);
-  add({ id: "venue", layer: "contract", title: "Send a swap to the attacker's contract", how: "A signed swap whose venue is an account the owner never approved.", result: await agentExecute(evilSigned.quoteJson, evilSigned.signatureB64, "agent", GAS.refusal) });
+  const evilSigned = signQuote(evil, "challenge");
+  add({ id: "venue", layer: "contract", title: "Send a swap to the attacker's contract", how: "A signed swap whose venue is an account the owner never approved.", result: await agentExecute(evilSigned.quoteJson, evilSigned.signatureB64, "challenge", GAS.refusal) });
+
+  // A minimum above the owner's floor, but 3% under what the pool pays right now.
+  const loose = buildSwapQuote(rq, nearUsd, { min_amount_out: ((rq.expectedOut * BigInt(97)) / BigInt(100)).toString() });
+  const looseSigned = signQuote(loose, "challenge");
+  add({ id: "loose", layer: "contract", title: "Sign a minimum 3% under the live pool", how: "Above the owner's fixed floor, so floors alone would let it through. The contract reads Ref's live quote itself before sending the swap.", result: await agentExecute(looseSigned.quoteJson, looseSigned.signatureB64, "challenge", GAS.swap) });
 
   // Layer 3: the DEX enforces the minimum output the contract wrote.
   const greedy = buildSwapQuote(rq, nearUsd, { min_amount_out: ((rq.spotOut * BigInt(102)) / BigInt(100)).toString() });
