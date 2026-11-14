@@ -14,7 +14,7 @@ Most agent guards ask you to trust their signing server. **We published ours.** 
 
 - **Tracks:** AI Security & Defense (primary): spending limits and a policy engine for an AI agent, with NEAR function-call keys. Also entered in Unstoppable DeFi (an agent trading vault).
 - **Built during the hackathon:** everything in this repo.
-- **Other entry by the same builder:** [Heist](https://github.com/Onegeex/heist), a separate, independent project in the Games track. It shares no code or deployment with IntentRail.
+- **Other entry by the same builder:** [Heist](https://github.com/heist12/HEISTgame), a separate, independent project in the Games track. It shares no code or deployment with IntentRail.
 - **NEAR tech used:** function-call access keys, a locked contract account (no full-access key), contract-to-DEX cross-contract calls with callbacks (Ref Finance), NEAR AI Cloud (the LLM agent), NEAR Intents 1Click (pricing preview and the `/mainnet` $1 swap). Chain signatures are designed for mainnet, not built.
 
 ## Check it in five minutes: do this, see that
@@ -219,4 +219,4 @@ MIT licensed.
 
 ## Also by this builder
 
-[Heist](https://github.com/Onegeex/heist) is a separate, independent NEAR HACKATHON submission: a game where players try to talk an AI guardian into opening a bounty vault. It does not import IntentRail's code; its vault contract was written separately.
+[Heist](https://github.com/heist12/HEISTgame) is a separate, independent NEAR HACKATHON submission: a game where players try to talk an AI guardian into opening a bounty vault. It does not import IntentRail's code; its vault contract was written separately.
